@@ -2,7 +2,7 @@
 
 A user-led engineering workflow for larger changes. It is instruction-first and portable: copy this folder into your agent's skills directory and start from `SKILL.md`. The environment must be able to read project files. No particular model or agent tool is required.
 
-> *[Artifex]([artifex - Wiktionary, the free dictionary](https://en.wiktionary.org/wiki/artifex))* is Latin for craftsperson, artisan, or maker.
+> *[Artifex](https://en.wiktionary.org/wiki/artifex)* is Latin for craftsperson, artisan, or maker.
 > 
 > The name reflects the philosophy behind this framework: **engineering is a craft that requires deliberate thinking, sound judgment, and discipline.**
 > 
