@@ -23,7 +23,7 @@ This is an **instructional skill**, not a permissions system or autonomous orche
 | P1 Research & analysis | `workflows/P1-research.md` | Kickoff, plus analysis with direction and milestones unless the task is small or a defect | User chooses direction and milestone, or for a small task approves the kickoff alone |
 | P2 Development analysis | `workflows/P2-development-analysis.md` | Given/When/Then specs, then verification contract, then the implementation and verification handoffs | User approves specs and contract. Handoffs are written when the user asks. Nothing starts a session |
 | P3 Implementation | `workflows/P3-implementation.md` | Changeset, ready PR, CI and PR-thread follow-up | PR open and CI passing; thread polling continues until the PR is completed |
-| P4 Review | `workflows/P4-review.md` | Review findings and verdict per round, up to 3 rounds | Review passed, or escalation after round 3 |
+| P4 Review | `workflows/P4-review.md` | Review findings and verdict per round, up to 3 rounds (1 for rework that P5 triggered) | Review passed, or escalation after round 3 |
 | P5 Auto verification | `workflows/P5-verification.md` | Results of the contract's auto scenarios. Not applicable when there are none | Results in; sign-off if there is no P6 |
 | P6 Manual verification | `workflows/P6-manual-verification.md` | Results of the contract's manual scenarios (functional, benchmark or both). Not applicable when there are none | User explicitly signs off milestone closure |
 
@@ -106,6 +106,7 @@ Workflows name tools by capability. Bind each one here:
 |---|---|---|---|
 | Benchmark designer: drafts a benchmark contract and runbook, and runs an approved one | P2 contract, P5, P6 | `benchmark-scenario` | `benchmark-designer`, when `benchmark-scenario` isn't installed. If neither exists, write the benchmark part of the contract by hand and say so |
 | Handoff writer: turns a session's context into a document another session can execute | P2 | `handoff` | Write the document yourself: what the future session is for, decisions made, constraints, references to artifacts instead of copies, suggested skills. Redact secrets and personal data |
+| PR reviewer: reviews a PR and returns findings, action classes and a verdict | P4 | `pr-review-pipeline` | Review by hand as P4 describes: coverage against the approved spec IDs, correctness, unjustified complexity and scope expansion, reported as concrete findings with evidence and a verdict |
 | PR feedback handler | P3 | See `standards/pr-feedback.md` | Follow that standard directly |
 
 ## Reading map

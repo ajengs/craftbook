@@ -22,7 +22,7 @@
 - State the kind: functional, benchmark, or both. Design a benchmark with the benchmark designer (`SKILL.md`, Optional tools).
 - List **high-level scenarios**, each with a code (`VER-001`, ...). They cover what routine test and CI runs do not show: spec-to-test matching (every approved spec has a covering test) and, as the milestone needs, user interactions, APIs, workflows and data consistency checks. Do not write step-by-step scripts and do not list "run the tests" as a scenario.
 - For each scenario: linked spec IDs, what to check, evidence to collect, **measurable pass condition**. Add environment and limitations.
-- Prefer extended integration tests that can run without running the app. For a benchmark, its session adds the harness it needs. Mark each scenario `auto` (P5) or `manual` (P6); either part may be empty.
+- Prefer extended integration tests that can run without running the app. For a benchmark, its session adds the harness it needs. Mark each scenario `auto` (P5) or `manual` (P6); either part may be empty. An optional full PR review (the PR reviewer on the whole PR) can be listed too. It runs only if the user approves the contract with it included.
 - For benchmarks only: comparison baseline, workload equivalence, repetitions/noise/invalid-run rules, and derivation method as relevant.
 - Name where raw evidence will be stored; do not assume it already exists.
 - Reconcile the draft with the currently approved specs before requesting approval. If materially affected by later changes, seek approval again before P5.

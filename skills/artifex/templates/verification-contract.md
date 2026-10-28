@@ -10,7 +10,8 @@ Routine test and CI runs are not scenarios. List what they don't show. Keep each
 | Code | Type | Run | Specs covered | What to check | Evidence to collect | Pass condition |
 |---|---|---|---|---|---|---|
 | VER-001 | Spec-to-test match | auto | All SPEC rows | Each approved spec has a test that covers it, added or existing | Table of spec → test, with gaps listed | No spec without a covering test |
-| VER-002 | <user interaction / API / workflow / data consistency / benchmark / other> | <auto / manual> | <SPEC ids> | | | |
+| VER-002 | Full PR review (optional) | auto | All SPEC rows | Review the whole PR, not only the new commits, with the PR reviewer | The review file | No blocks-merge findings. Include only if the user approves it. Runs once: skipped on reruns after rework |
+| VER-003 | <user interaction / API / workflow / data consistency / benchmark / other> | <auto / manual> | <SPEC ids> | | | |
 
 ## Environment / fixtures / reproducibility
 

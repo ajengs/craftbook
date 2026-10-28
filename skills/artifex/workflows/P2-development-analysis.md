@@ -18,6 +18,7 @@
    - List **high-level scenarios**, not scripts, covering what routine test and CI runs don't show: matching each approved spec to a test that covers it, plus, as the milestone needs, user interactions, APIs, workflows and data consistency checks.
    - Prefer extended integration tests that can run without running the app.
    - Mark each scenario **auto** (runs in P5 right after P4 passes) or **manual** (runs in P6 on the user's trigger). A milestone may have no auto scenarios, no manual ones, or both. Say which.
+   - Offer the **full PR review** as an optional scenario: the PR reviewer (`SKILL.md`, Optional tools) reviews the whole PR, not only the new commits, in P5. It runs only if the user approves the contract with it included.
    - Benchmark: invoke the benchmark designer (`SKILL.md`, Optional tools) in Draft mode to design the benchmark contract and its runbook. The benchmark session adds the harness it needs. Mark the benchmark auto or manual like any other scenario. The contract is human-targeted and the runbook is agent-facing.
    - Both: one verification contract covers the functional scenarios and points to the benchmark contract for the benchmark part.
    - The user reviews the contract through comments and approves a specific revision. On approval, write `milestones/<id>/verification-contract.md` and record it in milestone `STATE.md`. The draft is **not** permission to execute anything.
