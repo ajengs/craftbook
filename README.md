@@ -14,17 +14,7 @@ Reusable agent skills for engineering work. Each skill is a self-contained folde
 
 ## Install
 
-Copy or link a skill folder into your agent's skills directory. Claude Code only finds a skill whose folder sits directly in that directory, for example `~/.claude/skills/<name>`.
-
-```bash
-ln -s "$(pwd)/skills/artifex" ~/.claude/skills/artifex
-```
-
-```powershell
-New-Item -ItemType Junction -Path "$HOME\.claude\skills\artifex" -Target "$PWD\skills\artifex"
-```
-
-Repeat for each skill you want. Linking keeps the repo as the source of truth. Skills are picked up on the next session start.
+See [`INSTALL.md`](INSTALL.md) for Linux, macOS and Windows, Claude Code, Claude.ai, Codex CLI, Gemini CLI and other agents.
 
 ## How the pieces fit
 
