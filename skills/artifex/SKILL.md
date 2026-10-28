@@ -86,6 +86,8 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 
 **Isolation.** A session works from its own inputs and does not track other sessions' context or progress unprompted. A P2 session doesn't follow P5's results. If P5 finds that P2's artifacts must change, it notifies the umbrella, and the umbrella sends P2 the request. P2 processes that request only and does not monitor P5 afterwards.
 
+**Token use.** Every new sub agent starts by loading the system prompt and every tool definition, and every call re-reads the whole context, so most of the cost is re-reading, not writing. When starting a sub agent, pick the model per job: the strongest available model for implementation and review, a cheaper one for mechanical jobs such as opening a PR, merging branches or running verification commands. Where the environment supports agent types with their own tool list, start it with only the tools the job needs. The handoff names both. The other rules sit where they apply: compacting at each approval (`workflows/P2-development-analysis.md`), settled decisions before the handoff (`standards/specifications.md`), small command output (the handoff templates), incremental review rounds (`workflows/P4-review.md`).
+
 ## Documents
 
 Documents the user reads or approves are **human-targeted**: kickoff, analysis, specs, verification contract, verification report. By default:

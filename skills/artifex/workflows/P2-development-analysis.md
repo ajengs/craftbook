@@ -8,6 +8,8 @@
 
 **Order:** specs, then verification contract, then the handoffs. Specs and contract are approved by the user, each before the next starts. P2 only produces artifacts and runs no implementation.
 
+**Compact at each approval.** Once the specs or the contract are approved, compact the session before the next step: the approved artifact carries the context, not the review conversation. Every comment answered on a long context re-reads all of it. If the environment can't compact, suggest the user starts a fresh P2 session for the next step from the approved artifact.
+
 1. Restate the **selected milestone only**: objectives, scope/exclusions, constraints, dependencies.
 2. Investigate relevant current behavior and architecture; create a shared **high-level current-state model** with the user.
 3. Agree on the **target-state model** and material design choices. Use `standards/design.md`; don't introduce complexity to accommodate speculative edge cases.
@@ -30,6 +32,7 @@
      - It references the approved specs and contract revisions and does not repeat them.
      - Its suggested-skills section names `artifex` and `workflows/P3-implementation.md`, and it gives that session's name as `<ticket id> P3 implementation <context>`.
    - **Verification handoff** (`templates/verification-handoff.md`), for the P5 auto verification and P6 manual verification runs. It lists the auto and manual scenarios and how to verify them. P5 cannot start until it exists.
+   - Before writing them, settle every choice that would change the code's shape if reopened (`standards/specifications.md`). Both handoffs name the model and agent type for their run (`SKILL.md`, Token use).
    - Handoffs are agent-facing, so write them as markdown. A handoff writer may save to a temporary directory by default; save each in `milestones/<id>/` instead, because it is a controlling artifact.
    - If the handoff writer cannot be invoked by you, ask the user to run it, or use the fallback in Optional tools.
 8. **Notify the umbrella** when a handoff is created or modified. Then stop. P2 does not monitor P3, P4 or P5. If the umbrella later sends a change request for the specs, contract or a handoff, process that request only. A changed spec or contract needs approval again.

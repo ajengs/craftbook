@@ -12,6 +12,8 @@
 - It is an isolated document: a fresh session can execute it using only this document and the approved artifacts it names.
 - Do **not** duplicate the entire spec or architectural analysis.
 - Name the branch the session works on and include the implementation rules from the template.
+- Settle every choice that would change the code's shape if reopened before writing it: test approach, test data format and size, file layout, how the work splits into PRs. List them as settled decisions. Reopening one after P3 starts means rework agents that re-read the code and context from scratch.
+- Name the model and agent type for the run (`SKILL.md`, Token use).
 - State the milestone objective, agreed approach, relevant code/interfaces, constraints, exclusions, checks expected, and what counts as a completed changeset.
 - Make design authority and escalation route clear. Do not over-prescribe trivial coding steps.
 - It has no approval step of its own: the user's request to write it is approval of the current specs and contract.
