@@ -37,7 +37,7 @@ Read `policies/core.md`. In particular:
 - Edge cases are findings, not automatically requirements. Do not grow scope or complexity without a justified, approved reason.
 - Internal codes (Artifex ids like SPEC- and VER-, phase codes, any code coined in a session) stay in notes. Never put them in code, tests, commits, PRs or ticket comments, in any phase. Describe the behavior in words.
 - Approved artifacts are version-specific. A material revision invalidates affected downstream approval(s) until reconciled.
-- Approving an artifact is not a go-ahead to start another session. Starting P2 and P3 needs the user's own request. P1 starts when the user starts Artifex, and P4 and the verification run start from the umbrella's checkpoints (see Session triggers).
+- Approving an artifact is not a go-ahead to start another session. Starting P2 and P3 needs the user's own request. P1 starts when the user starts Artifex, and P4 and the verification run start from the umbrella's checkpoints (see Session triggers). The user's request to start P3 also covers the reworks that P4 findings, P5 failures and PR feedback call for in that milestone, up to the caps (3 review rounds, 2 reworks after P5 failures), with a new P3 sub agent when the previous one has ended. A route to P2 or P1 always needs the user.
 
 ## Coordination and working state
 
@@ -74,11 +74,19 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 | P1 | A new session, created by the umbrella immediately when the user starts Artifex |
 | P2 | A new session, started manually: the user asks the umbrella, once the kickoff is approved |
 | P3 | An **isolated sub agent** of the umbrella session, started when the user says "start P3", working from the implementation handoff |
-| P4 | An isolated sub agent of the umbrella, started automatically when P3 reports the PR is open, and again for each later review round when P3 reports fixes pushed. The umbrella does not wait for CI |
+| P4 | An isolated sub agent of the umbrella, started automatically when P3 reports the PR is open, and again for each later round (see Which pushes start a review round). The umbrella does not wait for CI |
 | P5 auto verification | An isolated sub agent of the umbrella, started automatically once P4 has passed and the verification handoff is ready with no blocker or dependency. Not applicable when the contract has no auto scenario |
 | P6 manual verification | An isolated sub agent of the umbrella, started only on the user's explicit trigger (the user asks the umbrella). Not applicable when the contract has no manual scenario. A benchmark in either part runs through the benchmark designer (see Optional tools), whose session adds the harness it needs |
 
 **Checkpoints.** A phase notifies the umbrella, through whatever channel the environment gives, when it: creates or modifies a handoff (P2); opens the PR, and pushes new commits after it is open (P3); finishes a review round (P4); has verification or benchmark results (P5, P6). Findings and change requests travel through the umbrella, not directly between sessions or sub agents. When P3 needs the user's input, for example on a PR thread, it escalates through the umbrella.
+
+**Which pushes start a review round.** A push is new commits from P3.
+- Before P4 has passed, only a push that answers the findings the umbrella relayed starts the next round. CI fixes and PR-thread fixes pushed in the meantime go into `STATE.md` and into that round's changes.
+- After P4 has passed, a push of new P3 commits that changes code or tests (PR-thread feedback, a CI fix, a P5 rework) starts one more incremental round. A push that changes only documentation, comments or formatting starts none: the umbrella records it in `STATE.md`. The round doesn't count toward the 3, and if it doesn't end in `pass` the umbrella escalates as in `workflows/P4-review.md`. If a code or test change landed after P5 had started or passed, P5 reruns on the new head before sign-off.
+- A rebase, or a merge of the target branch, starts no round and no P5 rerun. If it needed conflict resolution, the resolution is new code and counts as a push.
+- The umbrella records the last reviewed head in `STATE.md`, and every other push beside it.
+
+**Rework cap.** The umbrella counts the P3 reworks that P5 failures trigger in `STATE.md`. After 2, a further P5 `fail` that points to P3 stops and goes to the user with each cycle's findings and options; no third rework starts on its own. A fail routed to P2 or P1 doesn't count, because those always need the user. P4 keeps its own cap of 3 rounds.
 
 **Reporting to the user.** The umbrella receives every checkpoint but posts only the major ones: approvals (needed or recorded), phase exits, blockers, decisions the user needs to make, PRs, and review or verification results. Routine checkpoints, such as a handoff touched, a push, a round starting, or a poll that found nothing, go into `STATE.md` and are not posted.
 
@@ -86,7 +94,7 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 
 **Isolation.** A session works from its own inputs and does not track other sessions' context or progress unprompted. A P2 session doesn't follow P5's results. If P5 finds that P2's artifacts must change, it notifies the umbrella, and the umbrella sends P2 the request. P2 processes that request only and does not monitor P5 afterwards.
 
-**Token use.** Every new sub agent starts by loading the system prompt and every tool definition, and every call re-reads the whole context, so most of the cost is re-reading, not writing. When starting a sub agent, pick the model per job: the strongest available model for implementation and review, a cheaper one for mechanical jobs such as opening a PR, merging branches or running verification commands. Where the environment supports agent types with their own tool list, start it with only the tools the job needs. The handoff names both. The other rules sit where they apply: compacting at each approval (`workflows/P2-development-analysis.md`), settled decisions before the handoff (`standards/specifications.md`), small command output (the handoff templates), incremental review rounds (`workflows/P4-review.md`).
+**Token use.** Every new sub agent starts by loading the system prompt and every tool definition, and every call re-reads the whole context, so most of the cost is re-reading, not writing. When starting a sub agent, pick the model per job: the strongest available model for implementation and review, a cheaper one for mechanical jobs such as opening a PR, merging branches or running verification commands. Where the environment supports agent types with their own tool list, start it with only the tools the job needs. The handoff names both. P4 has no handoff, so the umbrella picks both when it starts each review sub agent. The other rules sit where they apply: compacting at each approval (`workflows/P2-development-analysis.md`), settled decisions before the handoff (`standards/specifications.md`), small command output (the handoff templates), incremental review rounds (`workflows/P4-review.md`).
 
 ## Documents
 

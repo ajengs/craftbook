@@ -8,6 +8,7 @@ Updated: <timestamp>
 Phase: <P1–P6>
 Status: <draft | pending approval | implementing | in review | verifying | ready for acceptance | blocked | closed>
 Review round: <n of 3 | not started>. CI: <not checked | watching | failing | passing>
+P5 reworks: <n of 2>. Last reviewed head: <commit>
 Next: <one actionable step>
 
 ## Milestones / sessions (initiative only)
