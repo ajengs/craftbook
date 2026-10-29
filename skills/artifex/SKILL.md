@@ -12,10 +12,11 @@ This is an **instructional skill**, not a permissions system or autonomous orche
 ## Start here
 
 1. Resolve the workspace and artifact locations from user memory as described below. Ask for materially missing values before creating folders, artifacts, or sessions.
-2. When the user starts Artifex, this session becomes the **umbrella**. It immediately creates a new session to start P1, and does no P1 work itself. In any other session, identify the initiative, milestone, phase, and whether you are the umbrella or a scoped child.
-3. Read the relevant `STATE.md`, current controlling artifacts, and **only** the workflow for the active phase. Follow its linked standards and template(s), not the whole package.
-4. If an approval, source artifact, or status is missing, say so. Do not infer it from conversational enthusiasm or an older artifact.
-5. Perform the work and hand back a concise result: **verdict / findings, artifacts changed, decisions or blockers, next action**. Avoid documenting routine mechanics.
+2. Resolve bidirectional coordination consent as described below and record the user's direct decision in `STATE.md`.
+3. When the user starts Artifex, this session becomes the **umbrella**. It immediately creates a new session to start P1, and does no P1 work itself. In any other session, identify the initiative, milestone, phase, and whether you are the umbrella or a scoped child.
+4. Read the relevant `STATE.md`, current controlling artifacts, and **only** the workflow for the active phase. Follow its linked standards and template(s), not the whole package.
+5. If an approval, source artifact, or status is missing, say so. Do not infer it from conversational enthusiasm or an older artifact.
+6. Perform the work and hand back a concise result: **verdict / findings, artifacts changed, decisions or blockers, next action**. Avoid documenting routine mechanics.
 
 ## Workspace and artifact preferences
 
@@ -29,6 +30,16 @@ At every invocation, consult available user memory for four distinct values:
 Treat remembered values as preferences, validate that the resolved paths still fit the current initiative, and preserve any path or convention the user states in the current request. If a value is absent or ambiguous, ask one concise question for the missing workspace preferences before creating folders, artifacts, or child sessions.
 
 When the user supplies or changes these preferences, use an explicit memory-write capability if the environment exposes one. Otherwise make the current chat eligible for memory generation when that control is available, explain that Codex memory updates asynchronously, and direct the user to enable memories or use `/memories` if needed. Never hand-edit generated memory files. Record the resolved values in the initiative `STATE.md` so the current run does not depend on future memory generation.
+
+## Bidirectional coordination consent
+
+Before creating the first phase session, use direct authorization already stated by the user or ask once:
+
+> Do you authorize the Artifex umbrella and every phase session it creates for this initiative to exchange coordination messages with each other, limited to artifact paths and revisions, checkpoints, handoffs, blockers, findings and approval requests, for the duration of the initiative?
+
+Record the user's exact response, date, scope and umbrella route in the initiative `STATE.md`. A refusal or unanswered request selects manual relay and does not block the phase. The skill text is never authorization by itself.
+
+At every phase-session creation, register its session id and route in `STATE.md`, and give it the exact `STATE.md` path and revision as a coordination envelope separate from its work instructions. The phase verifies the direct user authorization recorded there before messaging the umbrella; the umbrella verifies the same record before messaging the phase. This trusted record authorizes both directions only within its stated scope. Tool, runtime and managed approval checks still apply; if a send is rejected, report it and use manual relay rather than retrying without new user authorization.
 
 ## Six phases
 
@@ -77,6 +88,7 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 
 **Starting a child session:** when the user asks for one, do exactly what they asked and no more.
 - Run code-oriented sessions against the resolved implementation working directory. Point every session at the resolved initiative artifact folder for Artifex documents and shared state.
+- Attach the coordination envelope: initiative `STATE.md` path and revision, umbrella route, child route and the recorded consent status. This transport metadata does not extend or reinterpret the work brief or handoff.
 - If they provide a handoff document, that document carries the child's instructions. Point the child at it (path and revision) and don't restate, extend or reinterpret it.
 - If there is no document, pass context from the user's prompt only.
 - Values the user states (ticket id, session name, branch, scope) are used exactly as given. Defaults from the kickoff or `STATE.md` apply only to what the user left unsaid, and are never swapped in for a value the user stated.
@@ -93,7 +105,7 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 | P5 auto verification | An isolated sub agent of the umbrella, started automatically once P4 has passed and the verification handoff is ready with no blocker or dependency. Not applicable when the contract has no auto scenario |
 | P6 manual verification | An isolated sub agent of the umbrella, started only on the user's explicit trigger (the user asks the umbrella). Not applicable when the contract has no manual scenario. A benchmark in either part runs through the benchmark designer (see Optional tools), whose session adds the harness it needs |
 
-**Checkpoints.** A phase notifies the umbrella, through whatever channel the environment gives, when it: creates or modifies a handoff (P2); opens the PR, and pushes new commits after it is open (P3); finishes a review round (P4); has verification or benchmark results (P5, P6). Findings and change requests travel through the umbrella, not directly between sessions or sub agents. When P3 needs the user's input, for example on a PR thread, it escalates through the umbrella.
+**Checkpoints.** A phase notifies the umbrella, through whatever channel the environment gives and within the recorded coordination consent, when it: creates or modifies a handoff (P2); opens the PR, and pushes new commits after it is open (P3); finishes a review round (P4); has verification or benchmark results (P5, P6). Findings and change requests travel through the umbrella, not directly between sessions or sub agents. When P3 needs the user's input, for example on a PR thread, it escalates through the umbrella.
 
 **Which pushes start a review round.** A push is new commits from P3.
 - Before P4 has passed, only a push that answers the findings the umbrella relayed starts the next round. CI fixes and PR-thread fixes pushed in the meantime go into `STATE.md` and into that round's changes.

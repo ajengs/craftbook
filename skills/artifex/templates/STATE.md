@@ -11,6 +11,15 @@ Review round: <n of 3 | not started>. CI: <not checked | watching | failing | pa
 P5 reworks: <n of 2>. Last reviewed head: <commit>
 Next: <one actionable step>
 
+## Coordination consent
+Status: <authorized | declined | manual relay>
+Direct user authorization: <exact response, date and source chat>
+Scope: <authorized message types and initiative duration>
+Umbrella route: <thread/session id and host when available>
+
+| Phase session | Role | Session / route | Consent evidence provided | Status |
+|---|---|---|---|---|
+
 ## Milestones / sessions (initiative only)
 | Milestone | Scope | Phase / status | Child session / role | State path | Dependency |
 |---|---|---|---|---|---|
