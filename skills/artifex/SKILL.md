@@ -11,10 +11,24 @@ This is an **instructional skill**, not a permissions system or autonomous orche
 
 ## Start here
 
-1. When the user starts Artifex, this session becomes the **umbrella**. It immediately creates a new session to start P1, and does no P1 work itself. In any other session, identify the initiative, milestone, phase, and whether you are the umbrella or a scoped child.
-2. Read the relevant `STATE.md`, current controlling artifacts, and **only** the workflow for the active phase. Follow its linked standards and template(s), not the whole package.
-3. If an approval, source artifact, or status is missing, say so. Do not infer it from conversational enthusiasm or an older artifact.
-4. Perform the work and hand back a concise result: **verdict / findings, artifacts changed, decisions or blockers, next action**. Avoid documenting routine mechanics.
+1. Resolve the workspace and artifact locations from user memory as described below. Ask for materially missing values before creating folders, artifacts, or sessions.
+2. When the user starts Artifex, this session becomes the **umbrella**. It immediately creates a new session to start P1, and does no P1 work itself. In any other session, identify the initiative, milestone, phase, and whether you are the umbrella or a scoped child.
+3. Read the relevant `STATE.md`, current controlling artifacts, and **only** the workflow for the active phase. Follow its linked standards and template(s), not the whole package.
+4. If an approval, source artifact, or status is missing, say so. Do not infer it from conversational enthusiasm or an older artifact.
+5. Perform the work and hand back a concise result: **verdict / findings, artifacts changed, decisions or blockers, next action**. Avoid documenting routine mechanics.
+
+## Workspace and artifact preferences
+
+At every invocation, consult available user memory for four distinct values:
+
+- the implementation working directory, identifying whether it is an ordinary checkout or a worktree;
+- the user's main work folder for project documents, artifacts and notes;
+- the project folder beneath that work folder;
+- the convention that selects the initiative artifact folder within the project folder.
+
+Treat remembered values as preferences, validate that the resolved paths still fit the current initiative, and preserve any path or convention the user states in the current request. If a value is absent or ambiguous, ask one concise question for the missing workspace preferences before creating folders, artifacts, or child sessions.
+
+When the user supplies or changes these preferences, use an explicit memory-write capability if the environment exposes one. Otherwise make the current chat eligible for memory generation when that control is available, explain that Codex memory updates asynchronously, and direct the user to enable memories or use `/memories` if needed. Never hand-edit generated memory files. Record the resolved values in the initiative `STATE.md` so the current run does not depend on future memory generation.
 
 ## Six phases
 
@@ -41,10 +55,10 @@ Read `policies/core.md`. In particular:
 
 ## Coordination and working state
 
-One **umbrella session per initiative** coordinates milestones, scoped child sessions and isolated sub agents, dependencies, approvals, and artifact versions. Artifacts, not session memory, carry context across sessions.
+One **umbrella session per initiative** coordinates milestones, scoped child sessions and isolated sub agents, dependencies, approvals, and artifact versions. Artifacts, not session memory, carry context across sessions. Store them in the resolved initiative artifact folder under the user's project work folder, separate from the implementation working directory unless the user explicitly makes them the same.
 
 ```text
-work/<initiative>/
+<main work folder>/<project folder>/<initiative artifact folder>/
   STATE.md                         # Umbrella-owned initiative registry
   kickoff.md
   analysis.md
@@ -62,6 +76,7 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 **Session names:** name every new Artifex session or sub agent `<ticket id> <phase code> <phase name> <additional context if any>`, separated by single spaces and without brackets, for example `PROJ-123 P3 implementation` or `PROJ-123 P2 analysis M1 specs`. Phase names: P1 research, P2 analysis, P3 implementation, P4 review, P5 auto verification, P6 manual verification. Use the ticket id the user gives, exactly as given, even if the kickoff says otherwise. Only if the user gave none, take it from the kickoff, or the initiative name if the initiative has none, and say which you used. Set the name where the environment allows it, otherwise suggest it to the user.
 
 **Starting a child session:** when the user asks for one, do exactly what they asked and no more.
+- Run code-oriented sessions against the resolved implementation working directory. Point every session at the resolved initiative artifact folder for Artifex documents and shared state.
 - If they provide a handoff document, that document carries the child's instructions. Point the child at it (path and revision) and don't restate, extend or reinterpret it.
 - If there is no document, pass context from the user's prompt only.
 - Values the user states (ticket id, session name, branch, scope) are used exactly as given. Defaults from the kickoff or `STATE.md` apply only to what the user left unsaid, and are never swapped in for a value the user stated.
@@ -101,7 +116,7 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 Documents the user reads or approves are **human-targeted**: kickoff, analysis, specs, verification contract, verification report. By default:
 
 1. Draft each as a **document artifact**, a commentable document in the environment's document or artifact system (for example a Claude Docs document), so the user can review with comments before approving. If the environment has none, say so and draft the markdown file instead.
-2. Generate the **markdown** file (`kickoff.md`, `specs.md`, ...) in the work folder only **after the user approves** that revision. Record the artifact reference and the approved revision in `STATE.md`.
+2. Generate the **markdown** file (`kickoff.md`, `specs.md`, ...) in the resolved initiative artifact folder only **after the user approves** that revision. Record the artifact reference and the approved revision in `STATE.md`.
 3. Every later change goes to the **same artifact**, never a new one. If the markdown already exists, update it in the same step so the two match. The artifact is the source and the markdown is a derived copy. Never edit only one of them.
 
 Agent-facing documents (`STATE.md`, `review.md`, handoffs, execution summaries, runbooks) are written directly as markdown. The user can override the default for any document.
