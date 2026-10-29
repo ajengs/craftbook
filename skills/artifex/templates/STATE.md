@@ -17,8 +17,8 @@ Direct user authorization: <exact response, date and source chat>
 Scope: <authorized message types and initiative duration>
 Umbrella route: <thread/session id and host when available>
 
-| Phase session | Role | Session / route | Consent evidence provided | Status |
-|---|---|---|---|---|
+| Phase session | Role | Session / route | Model / effort requested; runtime confirmation | Consent evidence provided | Status |
+|---|---|---|---|---|---|
 
 ## Milestones / sessions (initiative only)
 | Milestone | Scope | Phase / status | Child session / role | State path | Dependency |

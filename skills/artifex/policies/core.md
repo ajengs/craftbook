@@ -20,9 +20,10 @@ These are **boundaries**, not a second workflow. Applies wherever relevant acros
 
 ## Scope and proportionality
 
-- Edge cases are **findings, not implicit requirements**. Assess only material cases for realism, consequences, and the smallest adequate handling.
+- Edge cases, dependencies and technical concerns are **findings, not implicit requirements**. Classify material cases as `handle`, `defer` or `escalate` using the definitions in `standards/design.md`.
 - No unapproved expansion of requirements, generalized abstractions, defensive layers, or speculative fallback paths. A technically possible scenario alone is insufficient justification.
 - Existing approved correctness, reliability, and security obligations are **not optional**. If satisfying them demands a new design choice or substantial scope increase, escalate rather than silently omit or expand.
+- Prefer the simplest implementation that satisfies approved requirements. Add abstractions for demonstrated needs, and reopen approved architectural decisions only with concrete contradictory evidence. Minor operational inconveniences do not justify new framework components.
 - Review must not manufacture requirements from speculative edge cases.
 
 ## Internal codes stay in notes
@@ -36,3 +37,9 @@ These are **boundaries**, not a second workflow. Applies wherever relevant acros
 - Don't claim work, approvals, tests, review independence, or results that did not happen.
 - Distinguish **observations**, **inferences**, and **assumptions** where the distinction affects a decision or verdict; link material claims to their evidence. Avoid inline tags on every sentence.
 - Tests/benchmarks need a reproducible method, raw results where available, derived results clearly separated, and limitations stated. Inconclusive is an acceptable verdict.
+
+## Autonomous execution
+
+Work toward the approved acceptance criteria and, where applicable, verification contract. After a failed implementation, debugging or verification attempt, use its evidence to revise the diagnostic hypothesis or approach before trying again. A retry of the same operation needs a meaningful change in inputs, conditions or evidence, such as confirmed recovery from a transient failure.
+
+Continue routine debugging while each iteration produces useful evidence or progress. When attempts stop doing so, escalate persistent blockers, environmental failures, specification ambiguity or material scope changes through the umbrella. Report attempted approaches, relevant evidence paths, what remains unknown and the decision or external change needed. Another technically possible attempt alone is not a reason to continue. Preserve contract pass conditions and necessary correctness safeguards; an unresolved or invalid run remains explicit under `standards/evidence.md`.

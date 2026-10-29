@@ -8,7 +8,7 @@
 
 **Order:** specs, implementation handoff and P3 checkpoint; then verification contract and verification handoff. Specs and contract are approved by the user. Each approval immediately produces its handoff. P2 only produces artifacts and runs no implementation; it remains open while P3 runs and for later change requests.
 
-**Compact at each approval.** Once the specs or the contract are approved, compact the session before the next step: the approved artifact carries the context, not the review conversation. Every comment answered on a long context re-reads all of it. If the environment can't compact, suggest the user starts a fresh P2 session for the next step from the approved artifact.
+**Context after approval:** use the approved artifact for the next handoff. Evaluate compaction or a fresh-session handoff under `SKILL.md`, Execution efficiency, when the review conversation has become burdensome; approval itself does not require a restart or delay the implementation checkpoint.
 
 1. Restate the **selected milestone only**: objectives, scope/exclusions, constraints, dependencies.
 2. Investigate relevant current behavior and architecture; create a shared **high-level current-state model** with the user.
@@ -20,7 +20,7 @@
    - Name the branch the session works on. Use the branch the user gives; if none, propose one for confirmation. An unresolved branch or design choice is a blocker, not a reason to write an incomplete handoff.
    - Include the implementation rules from the template unchanged unless the user says otherwise.
    - Reference the approved specs revision and do not repeat the specs or require a verification contract.
-   - Settle every choice that would change the code's shape if reopened (`standards/specifications.md`). Name the model and agent type for the run (`SKILL.md`, Token use).
+   - Settle every choice that would change the code's shape if reopened (`standards/specifications.md`). Name the model, reasoning effort and agent type for the run (`SKILL.md`, Model allocation).
    - Name `artifex` and `workflows/P3-implementation.md` as suggested instructions, and name the session `<ticket id> P3 implementation <context>`.
    - Notify the umbrella with the approved specs revision, completed implementation-handoff path and revision, and any blocker. With no blocker, this first P2 checkpoint tells the umbrella to create and start a dedicated P3 phase session from the handoff. That P3 session spawns its own isolated implementation subagent. P2 continues to step 7; it does not stop or monitor P3.
 7. **Verification contract, after the implementation checkpoint** (`templates/verification-contract.md`, `standards/specifications.md`). Draft and review it through the same native-artifact or markdown-viewer branch in `SKILL.md`, Documents; in the markdown-first branch, create `milestones/<id>/verification-contract.md` before review and keep revising that same file.

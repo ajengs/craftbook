@@ -13,7 +13,7 @@
 - Do **not** duplicate the entire spec or architectural analysis.
 - Name the branch the session works on and include the implementation rules from the template.
 - Settle every choice that would change the code's shape if reopened before writing it: test approach, test data format and size, file layout, how the work splits into PRs. List them as settled decisions. Reopening one after P3 starts means rework agents that re-read the code and context from scratch.
-- Name the model and agent type for the run (`SKILL.md`, Token use).
+- Name the model, reasoning effort and agent type for the run (`SKILL.md`, Model allocation).
 - State the milestone objective, agreed approach, relevant code/interfaces, constraints, exclusions, checks expected, and what counts as a completed changeset.
 - Make design authority and escalation route clear. Do not over-prescribe trivial coding steps.
 - It has no approval step of its own. Its completion, together with the approved specs and no blocker, is the checkpoint that creates P3 automatically. The P3 session starts implementation subagents; the umbrella does not.
