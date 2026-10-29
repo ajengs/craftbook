@@ -1,6 +1,6 @@
 # Verification contract — <milestone>
 
-Status: draft (starts after specs are approved; the handoffs are written only after this contract is approved)
+Status: draft (starts after the implementation checkpoint; the verification handoff is written immediately after this contract is approved)
 Specs: <path@revision>
 Kind: functional | benchmark | both. For a benchmark, design it with the benchmark designer and reference its contract.
 

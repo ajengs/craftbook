@@ -1,13 +1,13 @@
 # P3 — Implementation
 
-**Entry:** Approved specs, approved verification contract **and** the implementation handoff, with exact revisions. **Start:** when the user says "start P3", the umbrella runs P3 as an **isolated sub agent**, working from the implementation handoff. **Owner:** Implementation agent; user retains design authority.
+**Entry:** Approved specs and the completed implementation handoff, with exact revisions and no blocker. **Start:** the umbrella runs P3 automatically as an **isolated sub agent** when P2 reports this complete checkpoint, working from the implementation handoff. The verification contract is not required to start. **Owner:** Implementation agent; user retains design authority.
 
 **Codes:** internal codes stay in notes. Keep them out of code, tests, commits and the PR (`policies/core.md`).
 
 1. Confirm authorized milestone scope, exclusions, controlling artifact revisions and project coding/testing conventions.
 2. Implement the agreed change. Choose routine implementation tactics as needed, but do **not** invent requirements, abstractions or extra edge-case coverage.
 3. Run appropriate local checks. Preserve useful results and note anything not run.
-4. If a **new design decision** appears, **pause affected work**, present realistic options/trade-offs/recommendation to the user through the umbrella, and wait for their decision. Independent work may proceed safely. If material, update/reapprove affected specs and verification contract through P2 before proceeding.
+4. If a **new design decision** appears, **pause affected work**, present realistic options/trade-offs/recommendation to the user through the umbrella, and wait for their decision. Independent work may proceed safely. If material, update and reapprove the affected specs and any existing affected verification contract through P2 before proceeding.
 5. If an unanticipated edge case appears, assess whether approved behavior already requires it; otherwise document it as a finding and apply the scope policy. Do not automatically implement it.
 6. Open the PR **ready for review, not as a draft**, once the change and its unit tests are in. Explicit VER integration tests are P5 scope. **Notify the umbrella that the PR is open, and don't wait for CI.** The umbrella then starts P4.
 7. **After the PR is open**, poll its CI status and stop once it passes. If CI fails, debug, fix, push, **notify the umbrella of the push**, and poll again.

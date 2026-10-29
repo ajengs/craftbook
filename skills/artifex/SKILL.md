@@ -45,24 +45,24 @@ At every phase-session creation, register its session id and route in `STATE.md`
 
 | Phase | Workflow | Main output | Exit condition |
 |---|---|---|---|
-| P1 Research & analysis | `workflows/P1-research.md` | Kickoff, plus analysis with direction and milestones unless the task is small or a defect | User chooses direction and milestone, or for a small task approves the kickoff alone |
-| P2 Development analysis | `workflows/P2-development-analysis.md` | Given/When/Then specs, then verification contract, then the implementation and verification handoffs | User approves specs and contract. Handoffs are written when the user asks. Nothing starts a session |
+| P1 Research & analysis | `workflows/P1-research.md` | Approved kickoff, plus either an approved analysis with direction and milestones or the user's explicit small-task scope confirmation | User approves kickoff and analysis and selects one milestone, or approves kickoff and confirms the scoped task itself as the milestone |
+| P2 Development analysis | `workflows/P2-development-analysis.md` | Approved specs and implementation handoff, then approved verification contract and verification handoff | Specs approval produces the implementation handoff and starts P3; P2 remains open to finish verification artifacts and receive later changes |
 | P3 Implementation | `workflows/P3-implementation.md` | Changeset, ready PR, CI and PR-thread follow-up | PR open and CI passing; thread polling continues until the PR is completed |
 | P4 Review | `workflows/P4-review.md` | Review findings and verdict per round, up to 3 rounds (1 for rework that P5 triggered) | Review passed, or escalation after round 3 |
 | P5 Auto verification | `workflows/P5-verification.md` | Results of the contract's auto scenarios. Not applicable when there are none | Results in; sign-off if there is no P6 |
 | P6 Manual verification | `workflows/P6-manual-verification.md` | Results of the contract's manual scenarios (functional, benchmark or both). Not applicable when there are none | User explicitly signs off milestone closure |
 
-**Order in P2:** the verification contract is drafted **only after the specs are approved**, and the handoffs are written **only after the contract is approved**. The contract lists high-level scenarios that go beyond routine test and CI runs, and prefers extended integration tests that run without the app. The contract marks each scenario **auto** (run in P5 right after P4 passes) or **manual** (run in P6 on the user's trigger). P5 and P6 require a passing review **and** the approved contract. Approval is needed again only if the specs or the contract change.
+**Order in P2:** approved specs immediately produce the implementation handoff and the first checkpoint, which starts P3 automatically. P2 remains open and then drafts the verification contract; its approval immediately produces the verification handoff. The contract does not gate P3. It lists high-level scenarios that go beyond routine test and CI runs, prefers extended integration tests that run without the app, and marks each scenario **auto** (run in P5 right after P4 passes) or **manual** (run in P6 on the user's trigger). P5 and P6 require a passing review, the approved contract and the verification handoff. Approval is needed again only if the specs or the contract change.
 
 ## Boundaries
 
 Read `policies/core.md`. In particular:
-- The user owns framing, new design decisions, approvals of specs and the verification contract, and final milestone closure. A handoff has no approval of its own: the user's request to write it counts as approval of the current specs and contract revisions, so don't ask again.
+- The user owns framing, new design decisions, approvals of specs and the verification contract, and final milestone closure. A handoff has no approval of its own: specs approval authorizes the implementation handoff, and contract approval authorizes the verification handoff. Write each immediately after its controlling approval.
 - Any **new design decision discovered during P3** must be escalated before affected work continues. P2 is the collaborative design phase, not an escalation ceremony.
 - Edge cases are findings, not automatically requirements. Do not grow scope or complexity without a justified, approved reason.
 - Internal codes (Artifex ids like SPEC- and VER-, phase codes, any code coined in a session) stay in notes. Never put them in code, tests, commits, PRs or ticket comments, in any phase. Describe the behavior in words.
 - Approved artifacts are version-specific. A material revision invalidates affected downstream approval(s) until reconciled.
-- Approving an artifact is not a go-ahead to start another session. Starting P2 and P3 needs the user's own request. P1 starts when the user starts Artifex, and P4 and the verification run start from the umbrella's checkpoints (see Session triggers). The user's request to start P3 also covers the reworks that P4 findings, P5 failures and PR feedback call for in that milestone, up to the caps (3 review rounds, 2 reworks after P5 failures), with a new P3 sub agent when the previous one has ended. A route to P2 or P1 always needs the user.
+- Starting Artifex authorizes the initial P1, P2 and P3 for the milestone selected in P1. The umbrella starts P2 after P1 reports either (a) the approved kickoff and analysis revisions plus the selected milestone or (b) the approved kickoff revision plus the user's explicit confirmation that the scoped task is the milestone. The umbrella starts P3 after P2 reports the approved specs revision, the completed implementation handoff and no blocker; the verification contract is not a P3 prerequisite. P4 and the verification run start from the umbrella's checkpoints (see Session triggers). P3 also covers the reworks that P4 findings, P5 failures and PR feedback call for in that milestone, up to the caps (3 review rounds, 2 reworks after P5 failures), with a new P3 sub agent when the previous one has ended. A later route back to P2 or P1 always needs the user.
 
 ## Coordination and working state
 
@@ -78,6 +78,7 @@ One **umbrella session per initiative** coordinates milestones, scoped child ses
     specs.md
     implementation-handoff.md
     verification-contract.md
+    verification-handoff.md
     review.md                      # Optional; may be a concise handoff report
     verification-report.md
 ```
@@ -86,7 +87,7 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 
 **Session names:** name every new Artifex session or sub agent `<ticket id> <phase code> <phase name> <additional context if any>`, separated by single spaces and without brackets, for example `PROJ-123 P3 implementation` or `PROJ-123 P2 analysis M1 specs`. Phase names: P1 research, P2 analysis, P3 implementation, P4 review, P5 auto verification, P6 manual verification. Use the ticket id the user gives, exactly as given, even if the kickoff says otherwise. Only if the user gave none, take it from the kickoff, or the initiative name if the initiative has none, and say which you used. Set the name where the environment allows it, otherwise suggest it to the user.
 
-**Starting a child session:** when the user asks for one, do exactly what they asked and no more.
+**Starting a child session:** start one only when the user asks or a Session triggers checkpoint explicitly makes it automatic. Use only the scope authorized by that request or checkpoint.
 - Run code-oriented sessions against the resolved implementation working directory. Point every session at the resolved initiative artifact folder for Artifex documents and shared state.
 - Attach the coordination envelope: initiative `STATE.md` path and revision, umbrella route, child route and the recorded consent status. This transport metadata does not extend or reinterpret the work brief or handoff.
 - If they provide a handoff document, that document carries the child's instructions. Point the child at it (path and revision) and don't restate, extend or reinterpret it.
@@ -99,8 +100,8 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 | Phase | How it runs |
 |---|---|
 | P1 | A new session, created by the umbrella immediately when the user starts Artifex |
-| P2 | A new session, started manually: the user asks the umbrella, once the kickoff is approved |
-| P3 | An **isolated sub agent** of the umbrella session, started when the user says "start P3", working from the implementation handoff |
+| P2 | A new session, created and started by the umbrella after P1 reports either the approved kickoff and analysis revisions plus the selected milestone, or the approved kickoff revision plus the user's explicit confirmation that the scoped task is the milestone |
+| P3 | An **isolated sub agent** of the umbrella session, started automatically after P2 reports the approved specs revision, the completed implementation handoff and no blocker; it does not wait for the verification contract |
 | P4 | An isolated sub agent of the umbrella, started automatically when P3 reports the PR is open, and again for each later round (see Which pushes start a review round). The umbrella does not wait for CI |
 | P5 auto verification | An isolated sub agent of the umbrella, started automatically once P4 has passed and the verification handoff is ready with no blocker or dependency. Not applicable when the contract has no auto scenario |
 | P6 manual verification | An isolated sub agent of the umbrella, started only on the user's explicit trigger (the user asks the umbrella). Not applicable when the contract has no manual scenario. A benchmark in either part runs through the benchmark designer (see Optional tools), whose session adds the harness it needs |
@@ -127,9 +128,10 @@ Use `templates/STATE.md` for both state files. The **umbrella is the single writ
 
 Documents the user reads or approves are **human-targeted**: kickoff, analysis, specs, verification contract, verification report. By default:
 
-1. Draft each as a **document artifact**, a commentable document in the environment's document or artifact system (for example a Claude Docs document), so the user can review with comments before approving. If the environment has none, say so and draft the markdown file instead.
-2. Generate the **markdown** file (`kickoff.md`, `specs.md`, ...) in the resolved initiative artifact folder only **after the user approves** that revision. Record the artifact reference and the approved revision in `STATE.md`.
-3. Every later change goes to the **same artifact**, never a new one. If the markdown already exists, update it in the same step so the two match. The artifact is the source and the markdown is a derived copy. Never edit only one of them.
+1. **Native document artifacts available:** draft each as a **document artifact**, a commentable document in the environment's document or artifact system, so the user can review it with comments before approving. Keep every review round in the same artifact. Generate or update the corresponding markdown file (`kickoff.md`, `analysis.md`, `specs.md`, ...) in the resolved initiative artifact folder only after the user approves that artifact revision. The artifact is the source of truth and the markdown file is its derived copy.
+2. **No native document artifacts:** create the markdown file directly in the resolved initiative artifact folder and immediately open it in the environment's artifact viewer or commentable document preview. The file is the source of truth. This step is complete only when the environment confirms that the file is open in a viewer that lets the user highlight a passage or select a visual element and send the annotation to the agent. A queued, unconfirmed or plain-editor open does not satisfy the gate; report that actual state instead of claiming the viewer is open. Keep every review round in the same file and preview.
+3. In either branch, apply each comment or annotation to that specific area while preserving the rest of the document. Ask for explicit approval of the current revision. For a native artifact, record its provider artifact reference and provider revision ID in `STATE.md`; also record the SHA-256 content hash of its approved markdown copy. For a markdown-first document, record its path and SHA-256 content hash. Compute hashes from the exact approved file bytes.
+4. If neither native artifacts nor an annotation-capable viewer are available, say so, draft the markdown file, open it in the best available editor or preview, and use passage-specific comments in chat.
 
 Agent-facing documents (`STATE.md`, `review.md`, handoffs, execution summaries, runbooks) are written directly as markdown. The user can override the default for any document.
 

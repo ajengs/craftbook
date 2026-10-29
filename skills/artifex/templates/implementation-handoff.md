@@ -1,7 +1,6 @@
 # Implementation handoff — <milestone>
 
 Approved specs: <path@revision>
-Approved verification contract: <path@revision>
 Branch: <branch name the session works on>
 Run by: an isolated sub agent of the umbrella session, using the `artifex` skill, implementation role, `workflows/P3-implementation.md`.
 Model / agent type: <strongest available model>; <agent type limited to the tools this work needs, or the default>
@@ -27,4 +26,4 @@ Every choice that would change the code's shape if reopened: test approach, test
 - Internal codes (Artifex ids like SPEC- and VER-, phase codes, any other code coined in sessions) stay in notes. Don't put them in code, tests, commits, PRs or ticket comments; describe the behavior in words.
 - You may run build, test, commit, push and open pull requests. Merging, deploying and backporting are not covered.
 
-New design decisions during P3 go to user. This handoff has no approval step of its own: the user's request to write it is the approval of the current specs and contract revisions.
+New design decisions during P3 go to user. This handoff has no approval step of its own: approval of the referenced specs authorizes its creation.

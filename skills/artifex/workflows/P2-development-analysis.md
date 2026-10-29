@@ -1,21 +1,29 @@
 # P2 — Development analysis
 
-**Entry:** One selected milestone and an approved kickoff, plus the approved analysis when P1 produced one. Small tasks and defects may skip the analysis. **Start:** manually: the user asks the umbrella to start it, once the scope is defined and the kickoff is approved. **Owners:** User and analysis agent, collaboratively.
+**Entry:** One selected milestone plus either (a) approved kickoff and analysis revisions or (b) an approved kickoff revision and the user's explicit small-task scope confirmation. **Start:** the umbrella creates and starts this session when either complete P1 checkpoint arrives. **Owners:** User and analysis agent, collaboratively.
 
-**Inputs:** Selected milestone, kickoff revision, analysis revision if any, relevant code/system context.
+**Inputs:** Selected milestone, approved kickoff revision, either the approved analysis revision or the user's recorded small-task scope confirmation, and relevant code/system context.
 
-**Documents:** specs and verification contract are human-targeted. Draft each as a document artifact and generate markdown only on approval (`SKILL.md`, Documents). Handoffs are agent-facing markdown.
+**Documents:** specs and verification contract are human-targeted. Review each using the native-artifact or markdown-viewer branch in `SKILL.md`, Documents. Handoffs are agent-facing markdown.
 
-**Order:** specs, then verification contract, then the handoffs. Specs and contract are approved by the user, each before the next starts. P2 only produces artifacts and runs no implementation.
+**Order:** specs, implementation handoff and P3 checkpoint; then verification contract and verification handoff. Specs and contract are approved by the user. Each approval immediately produces its handoff. P2 only produces artifacts and runs no implementation; it remains open while P3 runs and for later change requests.
 
 **Compact at each approval.** Once the specs or the contract are approved, compact the session before the next step: the approved artifact carries the context, not the review conversation. Every comment answered on a long context re-reads all of it. If the environment can't compact, suggest the user starts a fresh P2 session for the next step from the approved artifact.
 
 1. Restate the **selected milestone only**: objectives, scope/exclusions, constraints, dependencies.
 2. Investigate relevant current behavior and architecture; create a shared **high-level current-state model** with the user.
 3. Agree on the **target-state model** and material design choices. Use `standards/design.md`; don't introduce complexity to accommodate speculative edge cases.
-4. Draft the Given/When/Then specifications as a table (`templates/specs.md`). Add Constraints and Boundaries only for what isn't already covered elsewhere. List only edge cases that affect requirements, design decisions or scope boundaries, each with `handle`, `defer` or `escalate` (`standards/design.md`).
-5. Resolve `escalate` cases with the user, or list them as blocking questions. The user reviews the specs through comments and approves a specific revision. On approval, write `milestones/<id>/specs.md`; the umbrella records the artifact reference and revision in milestone `STATE.md`.
-6. **Verification contract, only after the specs are approved** (`templates/verification-contract.md`, `standards/specifications.md`).
+4. Draft the Given/When/Then specifications as a table (`templates/specs.md`). Add Constraints and Boundaries only for what isn't already covered elsewhere. List only edge cases that affect requirements, design decisions or scope boundaries, each with `handle`, `defer` or `escalate` (`standards/design.md`). Follow `SKILL.md`, Documents: use a native document artifact when available; otherwise create `milestones/<id>/specs.md` and open it in the artifact viewer immediately. Process passage or visual annotations as focused revisions while preserving the rest of the document.
+5. Resolve `escalate` cases with the user, or list them as blocking questions. The user reviews the specs through annotations and approves a specific revision. On approval, ensure the approved `milestones/<id>/specs.md` derived copy exists; the umbrella records the provider revision ID and SHA-256 markdown hash, or the markdown-first path and SHA-256 hash, as required by `SKILL.md`, Documents.
+6. **Implementation handoff, immediately after specs approval** (`templates/implementation-handoff.md`, `standards/specifications.md`). Create `milestones/<id>/implementation-handoff.md` with the handoff writer (`SKILL.md`, Optional tools), or its fallback, without another approval or request. It is an agent-facing instruction document that a fresh isolated P3 sub agent can execute using only the handoff and the approved specs it names.
+   - Tell the writer that the future session implements this milestone from the approved specs, and give it the template's headings.
+   - Name the branch the session works on. Use the branch the user gives; if none, propose one for confirmation. An unresolved branch or design choice is a blocker, not a reason to write an incomplete handoff.
+   - Include the implementation rules from the template unchanged unless the user says otherwise.
+   - Reference the approved specs revision and do not repeat the specs or require a verification contract.
+   - Settle every choice that would change the code's shape if reopened (`standards/specifications.md`). Name the model and agent type for the run (`SKILL.md`, Token use).
+   - Name `artifex` and `workflows/P3-implementation.md` as suggested instructions, and name the session `<ticket id> P3 implementation <context>`.
+   - Notify the umbrella with the approved specs revision, completed implementation-handoff path and revision, and any blocker. With no blocker, this first P2 checkpoint starts P3 automatically as an isolated sub agent. P2 continues to step 7; it does not stop or monitor P3.
+7. **Verification contract, after the implementation checkpoint** (`templates/verification-contract.md`, `standards/specifications.md`). Draft and review it through the same native-artifact or markdown-viewer branch in `SKILL.md`, Documents; in the markdown-first branch, create `milestones/<id>/verification-contract.md` before review and keep revising that same file.
    - Decide with the user what the milestone needs: functional verification, a benchmark, or both.
    - List **high-level scenarios**, not scripts, covering what routine test and CI runs don't show: matching each approved spec to a test that covers it, plus, as the milestone needs, user interactions, APIs, workflows and data consistency checks.
    - Prefer extended integration tests that can run without running the app.
@@ -23,22 +31,12 @@
    - Offer the **full PR review** as an optional scenario: the PR reviewer (`SKILL.md`, Optional tools) reviews the whole PR, not only the new commits, in P5. It runs only if the user approves the contract with it included.
    - Benchmark: invoke the benchmark designer (`SKILL.md`, Optional tools) in Draft mode to design the benchmark contract and its runbook. The benchmark session adds the harness it needs. Mark the benchmark auto or manual like any other scenario. The contract is human-targeted and the runbook is agent-facing.
    - Both: one verification contract covers the functional scenarios and points to the benchmark contract for the benchmark part.
-   - The user reviews the contract through comments and approves a specific revision. On approval, write `milestones/<id>/verification-contract.md` and record it in milestone `STATE.md`. The draft is **not** permission to execute anything.
-7. **Handoffs, only after the verification contract is approved and the user asks for them.** The user's request to write a handoff is also approval of the current specs and contract revisions. Record that in milestone `STATE.md` and do not ask again. Create each with the handoff writer (`SKILL.md`, Optional tools). P2 only **produces** these documents. Do not execute them, start any session, or begin implementing here. Each is an isolated document: a fresh session must be able to execute it using only that document and the approved artifacts it names.
-   - **Implementation handoff** (`templates/implementation-handoff.md`), for the P3 session.
-     - Tell the writer what the future session is for (implementing this milestone from the approved specs) and give it the template's headings.
-     - It names the branch the session works on. Use the branch the user gives; if none, propose one for the user to confirm.
-     - It includes the implementation rules from the template unchanged, unless the user says otherwise.
-     - It references the approved specs and contract revisions and does not repeat them.
-     - Its suggested-skills section names `artifex` and `workflows/P3-implementation.md`, and it gives that session's name as `<ticket id> P3 implementation <context>`.
-   - **Verification handoff** (`templates/verification-handoff.md`), for the P5 auto verification and P6 manual verification runs. It lists the auto and manual scenarios and how to verify them. P5 cannot start until it exists.
-   - Before writing them, settle every choice that would change the code's shape if reopened (`standards/specifications.md`). Both handoffs name the model and agent type for their run (`SKILL.md`, Token use).
-   - Handoffs are agent-facing, so write them as markdown. A handoff writer may save to a temporary directory by default; save each in `milestones/<id>/` instead, because it is a controlling artifact.
-   - If the handoff writer cannot be invoked by you, ask the user to run it, or use the fallback in Optional tools.
-8. **Notify the umbrella** when a handoff is created or modified. Then stop. P2 does not monitor P3, P4 or P5. If the umbrella later sends a change request for the specs, contract or a handoff, process that request only. A changed spec or contract needs approval again.
+   - The user reviews the contract through comments or annotations and approves a specific revision. On approval, synchronize the approved `milestones/<id>/verification-contract.md` copy and record the exact artifact and file identities required by `SKILL.md`, Documents. The draft is **not** permission to execute anything.
+8. **Verification handoff, immediately after verification-contract approval** (`templates/verification-handoff.md`). Create `milestones/<id>/verification-handoff.md` with the handoff writer, or its fallback, without another approval or request. It lists the approved specs and contract revisions, the auto and manual scenarios, how to verify them, the evidence destination, and the model and agent type for P5/P6. Notify the umbrella when it is created or modified. P5 cannot start until the approved contract and this handoff are ready.
+9. Keep the P2 session available after both checkpoints. Do not monitor P3, P4 or P5. If the umbrella later sends a change request for the specs, contract or either handoff, process that request only. A changed spec or contract needs approval again and any affected handoff must be regenerated before its next consumer starts.
 
-**Approval is not a go-ahead to hand off or to start a session.** Approving the contract starts nothing. The user asks for the handoffs, and later starts P3, separately.
+**Handoff meaning:** writing a handoff creates an agent-facing instruction document; handing off starts its isolated consumer. Specs approval is the go-ahead to write the implementation handoff, and its complete checkpoint tells the umbrella to hand off to P3 automatically. Verification-contract approval is the go-ahead to write the verification handoff. Neither handoff has a separate approval gate.
 
 **Outputs:** Approved specs and verification contract; implementation and verification handoff documents ready to run in isolated sessions.
 
-**Exit:** Specs and contract approved, and the handoffs written on the user's request. P3 starts only when the user starts it.
+**Exit:** Approved specs and verification contract; implementation and verification handoff documents ready to run in isolated sessions. P3 starts from the first checkpoint in step 6. P2 remains available to finish the verification artifacts while P3 runs and to process later change requests.

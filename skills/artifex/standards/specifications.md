@@ -8,7 +8,7 @@
 
 ## Implementation handoff (P2 → P3)
 
-- Create it only after the specs **and the verification contract** are approved and the user asks for it, with the handoff writer (`SKILL.md`, Optional tools). Reference both approved revisions.
+- Create it immediately after the specs are approved, with the handoff writer (`SKILL.md`, Optional tools). Specs approval authorizes writing it; it has no separate approval or request. Reference the approved specs revision.
 - It is an isolated document: a fresh session can execute it using only this document and the approved artifacts it names.
 - Do **not** duplicate the entire spec or architectural analysis.
 - Name the branch the session works on and include the implementation rules from the template.
@@ -16,10 +16,10 @@
 - Name the model and agent type for the run (`SKILL.md`, Token use).
 - State the milestone objective, agreed approach, relevant code/interfaces, constraints, exclusions, checks expected, and what counts as a completed changeset.
 - Make design authority and escalation route clear. Do not over-prescribe trivial coding steps.
-- It has no approval step of its own: the user's request to write it is approval of the current specs and contract.
-- A second isolated document, the verification handoff, serves the P5 auto and P6 manual verification runs. It names the approved revisions, the auto and manual contract scenarios, how to verify (prefer extended integration tests that run without the app), and where evidence and results go.
+- It has no approval step of its own. Its completion, together with the approved specs and no blocker, is the checkpoint that starts P3 automatically.
+- A second isolated document, the verification handoff, is created immediately after verification-contract approval and serves the P5 auto and P6 manual verification runs. It names the approved revisions, the auto and manual contract scenarios, how to verify (prefer extended integration tests that run without the app), and where evidence and results go.
 
-## Verification contract (starts after specs are approved; the handoff follows its approval)
+## Verification contract (starts after the implementation checkpoint; the verification handoff follows its approval)
 
 - State the kind: functional, benchmark, or both. Design a benchmark with the benchmark designer (`SKILL.md`, Optional tools).
 - List **high-level scenarios**, each with a code (`VER-001`, ...). They cover what routine test and CI runs do not show: spec-to-test matching (every approved spec has a covering test) and, as the milestone needs, user interactions, APIs, workflows and data consistency checks. Do not write step-by-step scripts and do not list "run the tests" as a scenario.
