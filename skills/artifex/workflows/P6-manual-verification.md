@@ -9,7 +9,7 @@
 **Codes:** internal codes stay in notes. Keep them out of test names, code, commits, the PR and ticket (`policies/core.md`).
 
 1. Check that the reviewed changeset and contract/spec revisions align. If not, stop and reconcile affected approvals.
-2. Execute **the manual scenarios**, with the same care as P5: raw output and derived calculations kept separate, workloads and pass conditions never altered to make a run pass, tests committed only once the umbrella confirms P3 is not making changes, and any push reported to the umbrella. A benchmark marked manual runs through the benchmark designer's Run mode (`SKILL.md`, Optional tools), which refuses to run unless the contract is approved as local markdown. Its session adds the harness it needs.
+2. Execute **the manual scenarios**, with the same care as P5: raw output and derived calculations kept separate, workloads and pass conditions never altered to make a run pass, tests committed only once the umbrella confirms that the P3 session has no active implementation subagent making changes, and any push reported to the umbrella. A benchmark marked manual runs through the benchmark designer's Run mode (`SKILL.md`, Optional tools), which refuses to run unless the contract is approved as local markdown. Its session adds the harness it needs.
 3. Add the results to the **same verification report** that P5 started, never a new one (`SKILL.md`, Documents). **Notify the umbrella when results are in.**
 4. Derive `pass`, `fail`, or `inconclusive` **from the contract**, not confidence or prose.
 5. On `fail`, route as in P5: defects to P3, design/spec issues to P2, invalid research assumptions to P1, through the umbrella; unclear cases to user triage.

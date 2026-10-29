@@ -9,14 +9,14 @@
 ## Implementation handoff (P2 → P3)
 
 - Create it immediately after the specs are approved, with the handoff writer (`SKILL.md`, Optional tools). Specs approval authorizes writing it; it has no separate approval or request. Reference the approved specs revision.
-- It is an isolated document: a fresh session can execute it using only this document and the approved artifacts it names.
+- It is an isolated document: a fresh P3 phase session can use it to coordinate its own isolated implementation subagent using only this document and the approved artifacts it names.
 - Do **not** duplicate the entire spec or architectural analysis.
 - Name the branch the session works on and include the implementation rules from the template.
 - Settle every choice that would change the code's shape if reopened before writing it: test approach, test data format and size, file layout, how the work splits into PRs. List them as settled decisions. Reopening one after P3 starts means rework agents that re-read the code and context from scratch.
 - Name the model and agent type for the run (`SKILL.md`, Token use).
 - State the milestone objective, agreed approach, relevant code/interfaces, constraints, exclusions, checks expected, and what counts as a completed changeset.
 - Make design authority and escalation route clear. Do not over-prescribe trivial coding steps.
-- It has no approval step of its own. Its completion, together with the approved specs and no blocker, is the checkpoint that starts P3 automatically.
+- It has no approval step of its own. Its completion, together with the approved specs and no blocker, is the checkpoint that creates P3 automatically. The P3 session starts implementation subagents; the umbrella does not.
 - A second isolated document, the verification handoff, is created immediately after verification-contract approval and serves the P5 auto and P6 manual verification runs. It names the approved revisions, the auto and manual contract scenarios, how to verify (prefer extended integration tests that run without the app), and where evidence and results go.
 
 ## Verification contract (starts after the implementation checkpoint; the verification handoff follows its approval)

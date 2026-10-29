@@ -2,8 +2,8 @@
 
 Approved specs: <path@revision>
 Branch: <branch name the session works on>
-Run by: an isolated sub agent of the umbrella session, using the `artifex` skill, implementation role, `workflows/P3-implementation.md`.
-Model / agent type: <strongest available model>; <agent type limited to the tools this work needs, or the default>
+Run by: a dedicated P3 phase session using the `artifex` skill and `workflows/P3-implementation.md`; that session spawns its own isolated implementation subagent.
+Implementation subagent model / agent type: <strongest available model>; <agent type limited to the tools this work needs, or the default>
 Session name: `<ticket id> P3 implementation <additional context if any>`
 
 ## Objective and agreed approach
