@@ -20,3 +20,4 @@
 - somehow push and open PR are not authorized on P3. not sure if it's Codex quirks
 - P3 also got "Git branch creation hit the session’s read-only .git restriction;"
     oh but then it went immediately to "I’ll request elevated execution for that authorized step so it can proceed from the approved base." and worked
+- "I’ll follow the Artifex closure process, verify the initiative’s final state and artifacts, then write a concise closure report in the existing ART-1 folder." --> there's a closer process here? lol
