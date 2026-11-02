@@ -1,7 +1,5 @@
 - when P5 or P6 fails, send report to umbrella. it should create a new session P7-debugging with references to verification report and findings.
 - considering to use one session for all. just auto compact often.
-- I still kinda like it that we can do parallel work on different sessions though. currently working on P2 for M2 while M1 is being worked on by its P3.
-- actually it might not matter for P3-P5 to be done on umbrella's subagents. just need to keep P1 and P2 separate by default for now. and maybe P6. and debugging session.
 - ensure no worktree creation unless requested
 - p2 could also propose code architecture/design when new entity is introduced, or changes are big.
 - might need to introduce another phase for UI elements design
@@ -21,3 +19,34 @@
 - P3 also got "Git branch creation hit the session’s read-only .git restriction;"
     oh but then it went immediately to "I’ll request elevated execution for that authorized step so it can proceed from the approved base." and worked
 - "I’ll follow the Artifex closure process, verify the initiative’s final state and artifacts, then write a concise closure report in the existing ART-1 folder." --> there's a closer process here? lol
+
+Artifex
+
+On code change caused by extension review round, only trigger iterative p4 once, and p5 once without full code review.
+
+Over time, we can have verification scenarios repository so agent can detect which module changes need what scenarios.
+
+Need to check pr review handler
+
+Need to have simplified workflows for debugging/investigation
+
+And also separate phase for codebase design. Or we can also include that in p2, after specs. 
+
+WAIT did P4 also run the app and functional tests??? If you’re rich that’s alr I guess
+
+Known issues: 
+
+permissions 
+On codex somehow umbrella always fails to listen to its subagents
+Sometimes sub session failed to send messages to umbrella because permission issue
+I need to review the transcript on sub sessions and sub agents. Via GUI ofc
+
+
+
+
+
+Filum
+
+I think it would be nice if we can include links to the observability. Metrics, traces, logs filtered by each use case
+And don’t forget search. This would be critical once we have several paths. Since we probably only has specific use case without knowing the entry point 
+Oohh route based on stack trace is also interesting 
