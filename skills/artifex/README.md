@@ -18,10 +18,12 @@ One umbrella session coordinates six phases:
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | P1 research            | Frame the problem with you. Review and approve a kickoff, then either an analysis and milestone or the scoped small task |
 | P2 analysis            | Review and approve specs, write the implementation handoff for P3, then continue with the verification contract and handoff |
-| P3 implementation      | A dedicated phase session coordinates isolated implementation subagents, opens the PR, and follows CI and review feedback |
+| P3 implementation      | An isolated sub agent, started by the umbrella from each handoff, opens the PR; the umbrella follows CI and review feedback |
 | P4 review              | An independent sub agent reviews the PR, up to 3 rounds, then escalates                                          |
 | P5 auto verification   | Runs the contract's auto scenarios right after review passes, when there are any                                 |
 | P6 manual verification | Runs the contract's manual scenarios on your trigger, when there are any                                         |
+
+Several P2 sessions can be active at once, one per milestone or ad hoc analysis. Each hands its work to the umbrella, which runs the implementation and verification sub agents.
 
 Approvals are tied to a specific revision of a specific artifact. Closing a milestone always needs your explicit sign-off.
 

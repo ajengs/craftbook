@@ -1,9 +1,11 @@
 # Implementation handoff — <milestone>
 
 Approved specs: <path@revision>
-Branch: <branch name the session works on>
-Run by: a dedicated P3 phase session using the `artifex` skill and `workflows/P3-implementation.md`; that session spawns its own isolated implementation subagent.
-P3 session and isolated worker model / effort: <resolved selections from `SKILL.md`, Model allocation; any override and reason>
+Branch: <branch name the sub agent works on>
+Working directory: <checkout or worktree path, confirmed by the user>
+Depends on: <other milestones, PRs or merges that must land first, or none>
+Run by: an isolated implementation sub agent, started by the umbrella, using the `artifex` skill and `workflows/P3-implementation.md`.
+Implementation sub agent model / effort: <resolved selections from `SKILL.md`, Model allocation; any override and reason>
 Agent type: <native configured type matching the selection, or the default; limit tools when supported>
 Session name: `<ticket id> P3 implementation <additional context if any>`
 

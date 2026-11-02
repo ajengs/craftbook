@@ -9,6 +9,7 @@ Phase: <P1–P6>
 Status: <draft | pending approval | implementing | in review | verifying | ready for acceptance | blocked | closed>
 Review round: <n of 3 | not started>. CI: <not checked | watching | failing | passing>
 P5 reworks: <n of 2>. Last reviewed head: <commit>
+Implementation: <none | active on <branch>, <working directory> | waiting: <reason>>. PR: <link | none>. PR polls: <CI | threads every 3 hours | done>
 Next: <one actionable step>
 
 ## Coordination consent
