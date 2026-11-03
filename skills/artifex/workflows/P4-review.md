@@ -1,6 +1,6 @@
 # P4 — Independent review
 
-**Entry:** An isolated sub agent started by the umbrella **automatically** when P3 reports the PR is open, and again for each later round (`SKILL.md`, Which pushes start a review round). The umbrella does not wait for CI or the verification contract. Inputs: the PR or changeset, P3 evidence, approved specs and implementation handoff; include the approved verification contract only when it is already available. **Owner:** Separate review sub agent.
+**Entry:** An isolated sub agent started by the umbrella **automatically** when P3 reports the PR is open, and again for each later round (`SKILL.md`, Which pushes start a review round). The umbrella does not wait for CI or the verification contract. Inputs: the PR or changeset, P3 evidence, approved specs and implementation handoff; include the approved verification contract only when it is already available. For a bug, the diagnosis stands in for the specs: the reviewer reports whether the change addresses the named root cause, whether the regression test asserts the reported symptom, and whether the change stays within what the diagnosis names. **Owner:** Separate review sub agent.
 
 **Codes:** internal codes stay in notes. Keep them out of anything posted to the PR or ticket (`policies/core.md`).
 
@@ -23,4 +23,4 @@ P4 does not watch the PR or CI. The umbrella does that. After a pass, new P3 com
 
 **Output:** Review verdict + findings per round; a `review.md` is optional if the result is already persistently captured. The PR reviewer's own review file can serve as that record.
 
-**Exit:** A `pass` with no unresolved blocking findings. The umbrella then starts P5 (auto verification) if it applies and the verification handoff is ready with no blocker or dependency, and tells the user whether P6 applies. P5 and P6 also need a separately approved verification contract.
+**Exit:** A `pass` with no unresolved blocking findings. The umbrella then starts P5 (auto verification) if it applies and the verification handoff is ready with no blocker or dependency, and tells the user whether P6 applies. P5 and P6 also need a separately approved verification contract; for a bug, the diagnosis replaces it.

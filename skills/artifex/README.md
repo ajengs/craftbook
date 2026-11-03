@@ -12,7 +12,7 @@ A user-led engineering workflow for larger changes. It is instruction-first and 
 
 ## What it covers
 
-One umbrella session coordinates six phases:
+One umbrella session coordinates six phases, plus a bug track:
 
 | Phase                  | What happens                                                                                                     |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -22,6 +22,7 @@ One umbrella session coordinates six phases:
 | P4 review              | An independent sub agent reviews the PR, up to 3 rounds, then escalates                                          |
 | P5 auto verification   | Runs the contract's auto scenarios right after review passes, when there are any                                 |
 | P6 manual verification | Runs the contract's manual scenarios on your trigger, when there are any                                         |
+| D1 bug investigation | For a bug ticket or a major P5 finding, in place of P1 and P2: reproduce, find the root cause, then fix directly or after you approve the cause and the fix. P3 to P6 follow |
 
 Several P2 sessions can be active at once, one per milestone or ad hoc analysis. Each hands its work to the umbrella, which runs the implementation and verification sub agents.
 

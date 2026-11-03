@@ -1,6 +1,6 @@
 # Implementation handoff — <milestone>
 
-Approved specs: <path@revision>
+Approved specs, or the diagnosis for a bug: <path@revision>
 Branch: <branch name the sub agent works on>
 Working directory: <checkout or worktree path, confirmed by the user>
 Depends on: <other milestones, PRs or merges that must land first, or none>
@@ -29,4 +29,4 @@ Every choice that would change the code's shape if reopened: test approach, test
 - Internal codes (Artifex ids like SPEC- and VER-, phase codes, any other code coined in sessions) stay in notes. Don't put them in code, tests, commits, PRs or ticket comments; describe the behavior in words.
 - You may run build, test, commit, push and open pull requests. Merging, deploying and backporting are not covered.
 
-New design decisions during P3 go to user. This handoff has no approval step of its own: approval of the referenced specs authorizes its creation.
+New design decisions during P3 go to user. This handoff has no approval step of its own: approval of the referenced specs, or for a bug of its fix approach, authorizes its creation; on a direct or reproduced path the diagnosis itself does.
