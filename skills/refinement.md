@@ -41,7 +41,14 @@ On codex somehow umbrella always fails to listen to its subagents
 Sometimes sub session failed to send messages to umbrella because permission issue
 I need to review the transcript on sub sessions and sub agents. Via GUI ofc
 
+artifex 
+for debugging
+- create a document that can be annotated on side viewer for diagnosis, if no side viewer annotation is possible (claude), crate an artifact document
+- on evidence, mention the sources (artifacts, metrics, logs, traces, P5 reports, etc)
+- on status page skill, ensure that timestamp also shows GMT+7
 
+for P2
+needs an agent that knows how to write specs in GWT formats. probably can use "42D1VO milestone 1 specs: Redis queue overflow to SQL" older version vs latest as sample
 
 
 
