@@ -45,7 +45,7 @@ artifex
 for debugging
 - create a document that can be annotated on side viewer for diagnosis, if no side viewer annotation is possible (claude), crate an artifact document
 - on evidence, mention the sources (artifacts, metrics, logs, traces, P5 reports, etc)
-- on status page skill, ensure that timestamp also shows GMT+7
+- on status page skill, ensure that timestamp also shows GMT+7. also how many ticks on fast mode before it goes back to hourly
 
 for P2
 needs an agent that knows how to write specs in GWT formats. probably can use "42D1VO milestone 1 specs: Redis queue overflow to SQL" older version vs latest as sample
@@ -57,3 +57,51 @@ Filum
 I think it would be nice if we can include links to the observability. Metrics, traces, logs filtered by each use case
 And don’t forget search. This would be critical once we have several paths. Since we probably only has specific use case without knowing the entry point 
 Oohh route based on stack trace is also interesting 
+
+
+I NEED TO ENSURE THAT ARTIFEX CAN CONTINUE ON AN ENTIRELY NEW SESSION OR EVEN PROVIDER CHANGE
+
+on benchmark
+
+one new contract document
+- blocking inputs from me
+- covering ver 9-12
+- the question
+- schedule (column: step, config and workload, concrete actions (API, scripts, browser interactions, etc), evidence, estimated time)
+  - preparation
+  - rehearsal
+  - measure empty baseline M0
+  - measure load almost limit M1
+  - measure load over limit m2
+  - sweep and park
+  - collector hold
+  - refill M4
+  - completion M5
+  - restore
+  - report
+- decision rule table: observation, decision
+- measurements: output, exact source and concrete methods,  purpose
+- env and control:
+  - target TBD
+  - required/recommended capacity (measured based on planned workload and past measurement on https://link.orangelogic.com/Tasks/42CVRA
+  - build: which branch and commit
+  - fixture/data needed (seeded or uploaded)
+  - configuration changes
+  - consumers/indexing pause
+  - port forwards
+  - noise/Shared / uncontrolled conditions
+- validity and limitations
+- human actions
+- permission needed for autonomous runs
+
+ensure build, test, commit, push are authorized
+create PR somehow takes lots of token?
+
+need to decide  which session is responsible for checking and addressing PR feedback. in a working model, P3 will poll and address them. but it might cause bloated context. though fresh subagent without proper context would be costly too since he would try to build the context probably from scratch.
+P2 is a candidate.
+or an entirely separate session. 
+it might be a good idea to ensure that we have a little bit more state recorded so feedback handler do not start from scratch, knows the design background, but preferably independent of P3 and P4. 
+
+need to ensure we agree on the skills to be used during the execution, especially auto verification and benchmark. also if possible, reviewer, feedback handler
+first is to ensure we know the most proper tools. also to reduce the cost.
+we could also have a local .tools file that artifex can refer 
