@@ -41,6 +41,7 @@ On codex somehow umbrella always fails to listen to its subagents
 Sometimes sub session failed to send messages to umbrella because permission issue
 I need to review the transcript on sub sessions and sub agents. Via GUI ofc
 
+
 artifex 
 for debugging
 - create a document that can be annotated on side viewer for diagnosis, if no side viewer annotation is possible (claude), crate an artifact document
@@ -52,11 +53,13 @@ needs an agent that knows how to write specs in GWT formats. probably can use "4
 
 
 
+
 Filum
 
 I think it would be nice if we can include links to the observability. Metrics, traces, logs filtered by each use case
 And don’t forget search. This would be critical once we have several paths. Since we probably only has specific use case without knowing the entry point 
 Oohh route based on stack trace is also interesting 
+
 
 
 I NEED TO ENSURE THAT ARTIFEX CAN CONTINUE ON AN ENTIRELY NEW SESSION OR EVEN PROVIDER CHANGE
@@ -105,3 +108,4 @@ it might be a good idea to ensure that we have a little bit more state recorded 
 need to ensure we agree on the skills to be used during the execution, especially auto verification and benchmark. also if possible, reviewer, feedback handler
 first is to ensure we know the most proper tools. also to reduce the cost.
 we could also have a local .tools file that artifex can refer 
+
