@@ -1029,7 +1029,8 @@ class Session:
         for action in actions:
             if action["action"] == "spawn" and dispatch and action["run_id"] not in self.state["active"]:
                 self.record({"type": "dispatched", "run_id": action["run_id"], "phase": action["phase"],
-                             "round": action.get("round"), "head": action["inputs"].get("head")})
+                             "round": action.get("round"), "head": action["inputs"].get("head"),
+                             "session_name": action["session_name"]})
             for key in ("result_path", "evidence_dir"):
                 if key in action:
                     action[key] = str((self.mdir / action[key]).resolve())
@@ -1160,8 +1161,8 @@ def run_report(events) -> dict:
         elif kind == "umbrella":
             umbrella.append({"session": ev["session"], "from": ts})
         elif kind == "dispatched":
-            runs[ev["run_id"]] = {"phase": ev["phase"], "dispatched": ts, "started": None, "agent": None,
-                                  "ended": None, "outcome": None}
+            runs[ev["run_id"]] = {"phase": ev["phase"], "session_name": ev.get("session_name"), "dispatched": ts,
+                                  "started": None, "agent": None, "ended": None, "outcome": None}
         elif kind == "started" and ev.get("run_id") in runs:
             runs[ev["run_id"]].update(started=ts, agent=ev.get("agent") or runs[ev["run_id"]]["agent"])
         elif kind in ("result", "complete") and ev["result"]["run_id"] in runs:
