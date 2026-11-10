@@ -822,5 +822,14 @@ class EvidenceDirTests(unittest.TestCase):
         self.assertEqual(p5["evidence_dir"], f"evidence/{p5['run_id']}")
 
 
+class VersionFlagTests(unittest.TestCase):
+    def test_version_flag_prints_the_router_version_and_exits_cleanly(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as raised:
+            af.main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn(af.ROUTER_VERSION, out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

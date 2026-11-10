@@ -39,6 +39,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+ROUTER_VERSION = "1.0.0"
 REVIEW_CAP = 3
 CYCLE_CAPS = {"initial": REVIEW_CAP, "p5_rework": 1, "incremental": 1}
 P5_REWORK_CAP = 2
@@ -1212,6 +1213,7 @@ def render_status(state: dict) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--version", action="version", version="%(prog)s " + ROUTER_VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
 
     def command(name, **kw):
