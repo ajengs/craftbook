@@ -1,0 +1,34 @@
+# Claude Code equivalents of the Codex profiles and agent files.
+# The Codex files stay the source of truth for intent: a "sol" model is the
+# stronger planning and review tier, "luna" the faster execution tier. Effort
+# carries over unchanged. `alias` is what the Agent tool and start_session
+# accept; `model` is the full id for places that take one.
+#
+# A host may refuse a model above the caller's own (Claude Code only lets a
+# session start same-tier or cheaper ones). Then record the refusal and the
+# model the session actually got, as SKILL.md, Model allocation describes.
+
+[umbrella]            # profiles/artifex-umbrella.config.toml: gpt-6-luna, low
+alias = "sonnet"
+model = "claude-sonnet-5-5"
+effort = "low"
+
+[planning]            # profiles/artifex-planning.config.toml: gpt-6.1-sol, medium (P1, P2, D1)
+alias = "opus"
+model = "claude-opus-5-5"
+effort = "medium"
+
+[artifex_worker]      # agents/artifex-worker.toml: gpt-6-luna, medium (P3)
+alias = "sonnet"
+model = "claude-sonnet-5-5"
+effort = "medium"
+
+[artifex_reviewer]    # agents/artifex-reviewer.toml: gpt-6.1-sol, high (P4)
+alias = "opus"
+model = "claude-opus-5-5"
+effort = "high"
+
+[artifex_verifier]    # agents/artifex-verifier.toml: gpt-6-luna, medium (P5)
+alias = "sonnet"
+model = "claude-sonnet-5-5"
+effort = "medium"

@@ -9,15 +9,18 @@ Commands (each takes --dir <milestone folder>):
     init      start the log for a milestone
     handoff   record an implementation or verification handoff
     result    validate an agent's result file, record it, route
-    event     record a poll, failed run, resume, dependency, P6 trigger, close
+    event     record a start, poll, failed run, resume, context, completion,
+              dependency, P6 trigger or close
     next      print the next actions
-    status    print the generated status block for STATE.md
+    status    print the router's status block
 
 Every command except status prints JSON: {"checkpoints": [...], "actions": [...]}.
 The umbrella posts checkpoints whose "post" is true, carries out each action
-literally and handles "halted" itself. Spawn actions are recorded as
-dispatched when printed (unless --dry-run); if a spawn then fails, record
-`event run-failed --run-id <id>`.
+literally and handles "halted" itself. A spawn action is recorded as
+dispatched when printed (unless --dry-run) and stays unconfirmed until the
+umbrella records `event started --run-id <id>`; until then every call prints
+it again, so a spawn that never happened can't leave the router waiting on a
+run that doesn't exist. If a spawn fails, record `event run-failed`.
 
 See references/orchestration.md for the result file and the transition table.
 """
@@ -62,6 +65,8 @@ ORIGIN_LABELS = {"initial": "", "p4": "review rework", "p5": "P5 rework", "ci": 
                  "threads": "PR feedback", "resume": "resumed"}
 HANDOFF_FIELDS = {"implementation": ("branch", "workdir", "target"), "verification": ()}
 LIST_FIELDS = ("depends_on", "auto", "manual")
+PLACEHOLDERS = {"", "tbd", "todo", "pending", "unknown", "?"}
+CI_OUTCOMES = ("passing", "failing", "pending", "none")
 SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
@@ -127,6 +132,30 @@ def is_current(state: dict, head) -> bool:
     return head is not None and head in state["pr"]["equivalent"]
 
 
+def is_placeholder(value) -> bool:
+    if isinstance(value, list):
+        return False
+    text = str(value or "").strip()
+    return text.lower() in PLACEHOLDERS or (text.startswith("<") and text.endswith(">"))
+
+
+def impl_fields(state: dict) -> dict:
+    """The implementation handoff's frontmatter, with placeholders filled from `event context`."""
+    impl = state["handoffs"].get("implementation")
+    if impl is None:
+        return {}
+    fields = dict(impl["fields"])
+    for key, value in impl.get("context", {}).items():
+        if is_placeholder(fields.get(key)):
+            fields[key] = value
+    return fields
+
+
+def open_fields(state: dict) -> list:
+    fields = impl_fields(state)
+    return [f for f in HANDOFF_FIELDS["implementation"] if is_placeholder(fields.get(f))]
+
+
 def record_push(state: dict, head: str, push: dict) -> None:
     pr = state["pr"]
     pr["head"] = head
@@ -139,7 +168,8 @@ def record_push(state: dict, head: str, push: dict) -> None:
         pr["equivalent"].append(head)
     if push["class"] != "none":
         state["pushes"].append(dict(push, to=head))
-        state["ci"] = "unknown"
+        if state["ci"] != "none":
+            state["ci"] = "unknown"
 
 
 def review_settled(state: dict) -> bool:
@@ -188,7 +218,9 @@ def on_umbrella(state, ev):
 def on_handoff(state, ev):
     kind = ev["kind"]
     previous = state["handoffs"].get(kind)
-    state["handoffs"][kind] = {"path": ev["path"], "sha256": ev["sha256"], "fields": ev["fields"]}
+    context = previous.get("context", {}) if previous else {}
+    state["handoffs"][kind] = {"path": ev["path"], "sha256": ev["sha256"], "fields": ev["fields"],
+                               "context": context}
     out = []
     if previous is None:
         out.append(checkpoint("handoff_recorded", f"{kind} handoff recorded: {ev['path']}", post=False))
@@ -196,6 +228,10 @@ def on_handoff(state, ev):
         out.append(checkpoint("handoff_modified", f"{kind} handoff changed: {ev['path']}", post=False))
     if kind == "implementation" and previous is None and state["pr"]["url"] is None:
         request(state, "P3", "initial")
+    if kind == "implementation" and open_fields(state):
+        left = open_fields(state)
+        out.append(checkpoint("handoff_open", f"The implementation handoff leaves {', '.join(left)} open; "
+                              "ask the user, then record `event context`", open=left))
     if kind == "verification":
         out.extend(after_review(state, from_pass=False))
     return out
@@ -207,6 +243,7 @@ def on_dispatched(state, ev):
     state["active"][ev["run_id"]] = {
         "phase": phase, "origins": req["origins"], "inputs": req["inputs"], "threads": req["threads"],
         "attempts": req["attempts"], "round": ev.get("round"), "head": ev.get("head"),
+        "started": False, "dispatched_at": ev.get("ts"),
     }
     state["seq"][phase] = state["seq"].get(phase, 0) + 1
     state["handled_threads"].extend(t for t in req["threads"] if t not in state["handled_threads"])
@@ -216,6 +253,55 @@ def on_dispatched(state, ev):
     if phase == "P6":
         state["p6"]["triggered"] = False
     return []
+
+
+def on_started(state, ev):
+    run = state["active"].get(ev["run_id"])
+    if run is None:
+        raise FlowError(f"{ev['run_id']} is not an active run")
+    run["started"] = True
+    if ev.get("agent"):
+        run["agent"] = ev["agent"]
+    return [checkpoint("started", f"{ev['run_id']} started", post=False)]
+
+
+def on_context(state, ev):
+    impl = state["handoffs"].get("implementation")
+    if impl is None:
+        raise FlowError("no implementation handoff recorded")
+    if state["pr"]["url"] is not None or any(r["phase"] == "P3" for r in state["active"].values()):
+        raise FlowError("branch, workdir and target are fixed once implementation has started or a PR exists")
+    unknown = [k for k in ev["fields"] if k not in HANDOFF_FIELDS["implementation"]]
+    if unknown:
+        raise FlowError(f"not an implementation handoff field: {', '.join(unknown)}")
+    impl["context"] = {**impl.get("context", {}), **ev["fields"]}
+    # The file keeps its placeholder; a concrete value the user changes replaces the file's.
+    for key, value in ev["fields"].items():
+        if not is_placeholder(impl["fields"].get(key)):
+            impl["fields"] = {**impl["fields"], key: value}
+    left = open_fields(state)
+    message = "Handoff context recorded" + (f"; still open: {', '.join(left)}" if left else "")
+    return [checkpoint("context", message, post=False)]
+
+
+def on_complete(state, ev):
+    """The umbrella finishes a halted P3 run itself: the user's answer left no agent work."""
+    env = ev["result"]
+    held = next((h for h in state["halt"] if h.get("run_id") == env["run_id"]
+                 and h["kind"] in ("blocked", "needs_decision") and h.get("phase") == "P3"), None)
+    if held is None:
+        raise FlowError(f"{env['run_id']} is not a blocked or needs_decision implementation run")
+    problems = ev.get("problems") or []
+    if problems and not ev.get("override"):
+        raise FlowError("cannot complete: " + "; ".join(problems))
+    state["halt"] = [h for h in state["halt"] if h is not held]
+    run = {"phase": "P3", "origins": held.get("origins", []), "inputs": [], "threads": []}
+    out = [checkpoint("completed_by_umbrella", ev.get("note") or f"{env['run_id']} completed by the umbrella",
+                      post=False)]
+    if problems:
+        out.append(checkpoint("override", f"{env['run_id']} completed despite validation problems: "
+                              f"{ev['override']}", post=False, problems=problems))
+    return out + p3_result(state, run, env, ev)
 
 
 def _clear_rejection(state, run_id):
@@ -269,7 +355,7 @@ def _stop(state, run, env, default):
     status = env["status"]
     message = env.get("question") if status == "needs_decision" else None
     return [halt(state, status, message or env.get("summary") or default, run_id=env["run_id"],
-                 artifacts=env.get("artifacts", []))]
+                 artifacts=env.get("artifacts", []), phase=run["phase"], origins=run.get("origins", []))]
 
 
 def p3_result(state, run, env, ev):
@@ -416,6 +502,8 @@ def on_poll(state, ev):
         state["ci"] = ev["outcome"]
         if ev["outcome"] == "passing":
             return [checkpoint("ci_passing", "CI passing", post=was != "passing")]
+        if ev["outcome"] == "none":
+            return [checkpoint("ci_none", "The repository has no CI; nothing to poll for it", post=was != "none")]
         if ev["outcome"] != "failing":
             return [checkpoint("ci_" + ev["outcome"], f"CI {ev['outcome']}", post=False)]
         if any(r["phase"] == "P3" for r in state["active"].values()):
@@ -472,7 +560,8 @@ def on_close(state, ev):
 HANDLERS = {
     "init": on_init, "handoff": on_handoff, "dispatched": on_dispatched, "run_failed": on_run_failed,
     "result": on_result, "poll": on_poll, "resume": on_resume, "dependency_met": on_dependency_met,
-    "trigger_p6": on_trigger_p6, "close": on_close, "umbrella": on_umbrella,
+    "trigger_p6": on_trigger_p6, "close": on_close, "umbrella": on_umbrella, "started": on_started,
+    "context": on_context, "complete": on_complete,
 }
 
 
@@ -502,10 +591,11 @@ def _ref(handoff) -> str:
     return f"{handoff['path']}@{handoff['sha256'][:12]}"
 
 
-def spawn_action(state: dict, phase: str) -> dict:
-    seq = state["seq"].get(phase, 0) + 1
-    run_id = f"{state['milestone']}-{phase}-{seq}"
-    req = state["requests"].get(phase, {"origins": [], "inputs": [], "threads": []})
+def spawn_action(state: dict, phase: str, run_id: str | None = None, run: dict | None = None) -> dict:
+    """A new spawn or, given an unconfirmed run, the same spawn printed again."""
+    if run_id is None:
+        run_id = f"{state['milestone']}-{phase}-{state['seq'].get(phase, 0) + 1}"
+    req = run or state["requests"].get(phase, {"origins": [], "inputs": [], "threads": []})
     impl = state["handoffs"]["implementation"]
     ver = state["handoffs"].get("verification")
     pr = state["pr"]
@@ -513,6 +603,11 @@ def spawn_action(state: dict, phase: str) -> dict:
     extra = [state["milestone"]]
     action = {"action": "spawn", "run_id": run_id, "phase": phase, "agent": PHASES[phase]["agent"],
               "workflow": PHASES[phase]["workflow"]}
+    if run is not None:
+        inputs["head"] = run.get("head") or pr["head"]
+    context = {k: v for k, v in impl.get("context", {}).items() if is_placeholder(impl["fields"].get(k))}
+    if context:
+        inputs["handoff_context"] = context
     if phase == "P3":
         inputs["origins"] = req["origins"]
         if req["inputs"]:
@@ -526,13 +621,18 @@ def spawn_action(state: dict, phase: str) -> dict:
         inputs["last_reviewed_head"] = state["review"]["last_reviewed_head"]
     if phase == "P4":
         review = state["review"]
-        action.update(round=review["rounds"] + 1, mode=review["mode"])
+        number = run["round"] if run is not None and run.get("round") else review["rounds"] + 1
+        action.update(round=number, mode=review["mode"])
         inputs["previous_review"] = review["last_review"]
-        extra.append(f"round {review['rounds'] + 1}")
+        extra.append(f"round {number}")
         if review["mode"] != "initial":
             extra.append(review["mode"].replace("_", " "))
     if phase in ("P5", "P6"):
         inputs["scenarios"] = ver["fields"].get("auto" if phase == "P5" else "manual", [])
+        action["evidence_dir"] = f"evidence/{run_id}"
+    if run is not None:
+        action["unconfirmed"] = (f"printed at {run.get('dispatched_at') or 'an earlier call'} with no "
+                                 "`event started`; if it is already running, record that instead of spawning again")
     action["session_name"] = " ".join([state["ticket"], phase, PHASES[phase]["name"], *extra])
     action["inputs"] = inputs
     action["result_path"] = f"results/{run_id}.json"
@@ -560,17 +660,20 @@ def _p3_blocker(state, siblings, active_phases):
         return "P5 may be committing tests on the branch"
     if "P6" in active_phases:
         return "P6 may be committing tests on the branch"
-    fields = state["handoffs"]["implementation"]["fields"]
+    left = open_fields(state)
+    if left:
+        return f"the implementation handoff leaves {', '.join(left)} open; ask the user, then record `event context`"
+    fields = impl_fields(state)
     missing = [d for d in fields.get("depends_on", []) if d not in state["deps_met"]]
     if missing:
         return f"waiting on dependencies: {', '.join(missing)}"
     for name, other in siblings:
-        other_impl = other["handoffs"].get("implementation")
-        if not other_impl:
+        other_fields = impl_fields(other)
+        if not other_fields:
             continue
         busy = any(r["phase"] == "P3" for r in other["active"].values())
-        same = (other_impl["fields"].get("branch") == fields.get("branch")
-                or other_impl["fields"].get("workdir") == fields.get("workdir"))
+        same = (other_fields.get("branch") == fields.get("branch")
+                or other_fields.get("workdir") == fields.get("workdir"))
         if busy and same:
             return f"milestone {name} has an implementation sub agent on the same branch or working directory"
     return None
@@ -592,7 +695,8 @@ def next_actions(state: dict, siblings=(), hash_of=None) -> list:
         return [{"action": "halted", "reasons": state["halt"]}]
     if "implementation" not in state["handoffs"]:
         return [_wait(None, "no implementation handoff recorded")]
-    actions = []
+    actions = [spawn_action(state, run["phase"], run_id, run)
+               for run_id, run in state["active"].items() if not run.get("started")]
     active_phases = {run["phase"] for run in state["active"].values()}
     ver = state["handoffs"].get("verification")
 
@@ -644,7 +748,7 @@ def idle_reason(state: dict) -> str:
         reason = "P5 is done or not applicable; waiting for the user's P6 trigger (event trigger-p6)"
     else:
         reason = "ready for acceptance; waiting for the user's sign-off (event close)"
-    if state["ci"] != "passing":
+    if state["ci"] not in ("passing", "none"):
         reason += f"; CI is {state['ci']}, keep polling"
     return reason
 
@@ -788,7 +892,7 @@ def _check_scenarios(state, phase, status, env) -> list:
 
 def check_git(state: dict, run: dict, env: dict) -> tuple[list, dict | None]:
     """Check pushed commits against the remote and the internal-codes rule."""
-    fields = state["handoffs"]["implementation"]["fields"]
+    fields = impl_fields(state)
     git = Git(fields["workdir"])
     branch, target_ref = fields["branch"], f"origin/{fields['target']}"
     phase = run["phase"]
@@ -907,9 +1011,9 @@ class Session:
         self.checkpoints = []
 
     def record(self, ev: dict) -> list:
-        trial = copy.deepcopy(self.state)
-        cps = apply(trial, ev)
         stamped = {"seq": len(self.events) + 1, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **ev}
+        trial = copy.deepcopy(self.state)
+        cps = apply(trial, stamped)
         self.mdir.mkdir(parents=True, exist_ok=True)
         with (self.mdir / "run.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(stamped, sort_keys=True) + "\n")
@@ -922,11 +1026,12 @@ class Session:
         actions = next_actions(self.state, load_siblings(self.mdir),
                                hash_of=lambda p: file_sha(resolve(self.mdir, p)))
         for action in actions:
-            if action["action"] == "spawn" and dispatch:
+            if action["action"] == "spawn" and dispatch and action["run_id"] not in self.state["active"]:
                 self.record({"type": "dispatched", "run_id": action["run_id"], "phase": action["phase"],
                              "round": action.get("round"), "head": action["inputs"].get("head")})
-            if "result_path" in action:
-                action["result_path"] = str((self.mdir / action["result_path"]).resolve())
+            for key in ("result_path", "evidence_dir"):
+                if key in action:
+                    action[key] = str((self.mdir / action[key]).resolve())
         return {"checkpoints": self.checkpoints, "actions": actions}
 
 
@@ -961,9 +1066,10 @@ def cmd_handoff(args):
     if not path.exists():
         raise FlowError(f"{path} not found")
     fields = parse_frontmatter(path.read_text(encoding="utf-8"))
-    missing = [f for f in HANDOFF_FIELDS[args.kind] if not fields.get(f)]
-    if missing:
-        raise FlowError(f"{path.name} frontmatter is missing: {', '.join(missing)}")
+    if args.kind == "implementation" and not fields:
+        raise FlowError(f"{path.name} has no frontmatter; use the template's, with TBD for anything not settled")
+    for name in HANDOFF_FIELDS[args.kind]:
+        fields.setdefault(name, "TBD")
     session.record({"type": "handoff", "kind": args.kind, "path": relative(args.dir, path),
                     "sha256": file_sha(path), "fields": fields})
     return session.respond(dispatch=not args.dry_run)
@@ -1003,10 +1109,40 @@ def cmd_event(args):
         ev = {"type": "trigger_p6"}
     elif kind == "umbrella":
         ev = {"type": "umbrella", "session": args.session}
+    elif kind == "started":
+        ev = {"type": "started", "run_id": args.run_id, "agent": args.agent}
+    elif kind == "context":
+        fields = {k: getattr(args, k) for k in HANDOFF_FIELDS["implementation"] if getattr(args, k)}
+        if not fields:
+            raise FlowError("give at least one of --branch, --workdir, --target")
+        ev = {"type": "context", "fields": fields, "note": args.note}
+    elif kind == "complete":
+        ev = complete_event(session, args)
     else:
         ev = {"type": "close", "note": args.note}
     session.record(ev)
     return session.respond(dispatch=not args.dry_run)
+
+
+def complete_event(session, args) -> dict:
+    state = session.state
+    held = next((h for h in state["halt"] if h.get("run_id") == args.run_id and h.get("phase") == "P3"), None)
+    if held is None:
+        raise FlowError(f"{args.run_id} is not a halted implementation run")
+    env = {"run_id": args.run_id, "phase": "P3", "status": "completed", "head": args.head,
+           "pr_url": args.pr_url or state["pr"]["url"]}
+    run = {"phase": "P3", "origins": held.get("origins", []), "inputs": [], "threads": []}
+    problems = []
+    if not SHA_RE.match(args.head or ""):
+        problems.append("head must be the full commit SHA")
+    if not env["pr_url"]:
+        problems.append("no PR recorded yet; give --pr-url")
+    push = None
+    if not problems:
+        git_problems, push = check_git(state, run, env)
+        problems += git_problems
+    return {"type": "complete", "result": env, "problems": problems, "override": args.override,
+            "push": push, "note": args.note}
 
 
 def cmd_next(args):
@@ -1027,12 +1163,12 @@ def render_status(state: dict) -> str:
             else:
                 steps.append(action["reason"])
         router = "running; next: " + "; ".join(steps)
-    active = ", ".join(f"{rid} ({run['phase']})" for rid, run in state["active"].items()) or "none"
+    active = ", ".join(f"{rid} ({run['phase']}{'' if run.get('started') else ', not confirmed started'})"
+                       for rid, run in state["active"].items()) or "none"
     queued = ", ".join(sorted(state["requests"])) or "none"
     cycle = "passed" if not review["open"] else "open"
     pushes = ", ".join(f"{(p.get('to') or '')[:12]} {p['class']}" for p in state["pushes"][-5:]) or "none"
     return "\n".join([
-        "<!-- generated by scripts/artifex_flow.py status; regenerate, don't edit -->",
         f"Router: {router}",
         f"Review: {review['mode'].replace('_', ' ')} cycle {cycle}, round {review['rounds']} of {review['cap']}; "
         f"{review['total']} round(s) in total. CI: {state['ci']}",
@@ -1079,7 +1215,7 @@ def build_parser() -> argparse.ArgumentParser:
     events = p.add_subparsers(dest="event", required=True)
     poll = events.add_parser("poll")
     poll.add_argument("--kind", choices=["ci", "threads"], required=True)
-    poll.add_argument("--outcome", choices=["passing", "failing", "pending"])
+    poll.add_argument("--outcome", choices=list(CI_OUTCOMES), help="none: the repository has no CI")
     poll.add_argument("--head")
     poll.add_argument("--ids", nargs="*", default=[], help="unresolved threads as <thread id>:<last comment id>")
     failed = events.add_parser("run-failed")
@@ -1094,6 +1230,20 @@ def build_parser() -> argparse.ArgumentParser:
     dep = events.add_parser("dependency-met")
     dep.add_argument("--name", required=True)
     events.add_parser("trigger-p6")
+    started = events.add_parser("started", help="confirm that a printed spawn actually started")
+    started.add_argument("--run-id", required=True)
+    started.add_argument("--agent", help="the harness's id for the agent or thread")
+    context = events.add_parser("context", help="fill implementation handoff fields the user settled later")
+    context.add_argument("--branch")
+    context.add_argument("--workdir")
+    context.add_argument("--target")
+    context.add_argument("--note")
+    complete = events.add_parser("complete", help="finish a blocked or needs_decision P3 run without an agent")
+    complete.add_argument("--run-id", required=True)
+    complete.add_argument("--head", required=True, help="full SHA on origin/<branch>")
+    complete.add_argument("--pr-url")
+    complete.add_argument("--note", required=True)
+    complete.add_argument("--override", help="accept despite validation problems, with the reason")
     umbrella = events.add_parser("umbrella", help="record a resumed or replacement umbrella session")
     umbrella.add_argument("--session", required=True)
     close = events.add_parser("close")

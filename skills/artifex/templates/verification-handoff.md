@@ -27,7 +27,7 @@ Prefer extended integration tests that run without running the app. Add explicit
 By default, commit added integration tests on the PR's branch. Do this only once the umbrella confirms that no implementation sub agent is active on the PR's branch. If implementation work is active, stop and tell the umbrella; that is handled manually. Notify the umbrella of any push.
 
 ## Evidence and reporting
-Where raw output goes. Report results, limitations and any spec or contract change you think is needed to the umbrella. Do not change the specs or the contract yourself. End by writing the result file to the given `result_path`, with an outcome for every assigned scenario, and return only that path (`references/orchestration.md`, Result file).
+Raw output goes in the `evidence_dir` the umbrella gives when it starts you (`evidence/<run id>/` in the milestone folder), never in `results/`, which holds only result files. Name anything that must go elsewhere, such as a benchmark's own output folder. Report results, limitations and any spec or contract change you think is needed to the umbrella. Do not change the specs or the contract yourself. End by writing the result file to the given `result_path`, with an outcome for every assigned scenario, and return only that path (`references/orchestration.md`, Result file).
 
 ## Rules
 - Write no comments in test code. If context is absolutely necessary, add the why in at most 3 lines.

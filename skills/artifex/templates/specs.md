@@ -25,4 +25,4 @@ Only cases that affect requirements, design decisions or scope boundaries. Do no
 
 ## Blocking questions
 
-Approval: pending; explicit decision + revision recorded in milestone `STATE.md`.
+Approval: pending; explicit decision + revision recorded in `state.json`.

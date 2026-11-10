@@ -15,10 +15,11 @@ The router doesn't spawn agents. Only the umbrella's harness can, so a `spawn` a
 | File | Writer | Holds |
 |---|---|---|
 | `milestones/<id>/run.jsonl` | Router only | Append-only events: handoffs, dispatches, results, polls, resumes. The state is a fold over this log |
-| `milestones/<id>/results/<run id>.json` | The agent of that run | Its result file |
-| `milestones/<id>/STATE.md` | Umbrella only | Decisions, approvals, consent, routes. Its status block is pasted from `status` output, not maintained by hand |
+| `milestones/<id>/results/<run id>.json` | The agent of that run | Its result file, and nothing else |
+| `milestones/<id>/evidence/<run id>/` | The P5 or P6 agent of that run | Raw verification output |
+| `state.json` (initiative folder) | Umbrella, through `scripts/artifex_state.py` | Decisions, approvals, consent, sessions, blockers (`references/state.md`). Nothing the router already holds |
 
-Each file has one writer. Never edit `run.jsonl` by hand; record a `resume` event instead.
+Each file has one writer. Never edit `run.jsonl` by hand; record an event instead. Routine transitions write only `run.jsonl`: the umbrella touches `state.json` for what it decides or posts, not for what the router did.
 
 ## Umbrella loop
 
@@ -26,22 +27,46 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
 
 1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id> [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
 2. **Carry out the actions in order:**
-   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs` and `result_path` as its coordination brief, next to the handoff reference. Don't add to them. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
+   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> [--agent <harness id>]`; chain it with your next router call rather than spending a turn on it. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
+   - `spawn` with `unconfirmed`: the router printed this run before and never got `started`. If the agent is in fact running, record `started`; if it never started, spawn it now; if it can't be started, record `run-failed`. The router never assumes a printed spawn happened, so a lost spawn can't leave it waiting forever.
    - `wait`: nothing to do. The reason says what it is waiting on.
    - `idle`: nothing is queued. Wait for a poll result, a user trigger or sign-off.
    - `halted`: handle every listed reason with the user (see Exceptions), then record `event resume`.
    - `done`: the milestone is closed.
 3. **When an agent returns a path:** run `result <path>`, then go back to step 2.
-4. **Post** each checkpoint with `post: true`, as one line or as the results it points to. Checkpoints with `post: false` go into `STATE.md` at the next write and are not posted (`SKILL.md`, Reporting to the user).
-5. **After each poll:** `event poll --kind ci --outcome passing|failing|pending --head <sha>`, or `event poll --kind threads --ids <thread>:<last comment id> ...` with every unresolved thread. The router queues a fix only for threads it hasn't dispatched in that version. The umbrella still schedules and runs the polls (`SKILL.md`, Polling belongs to the umbrella).
+4. **Post** each checkpoint with `post: true`, as one line or as the results it points to. Checkpoints with `post: false` are already in `run.jsonl`: don't post them and don't copy them into `state.json` (`SKILL.md`, Reporting to the user).
+5. **After each poll:** `event poll --kind ci --outcome passing|failing|pending|none --head <sha>` (`none`: the repository has no CI at all, so the router stops waiting on it), or `event poll --kind threads --ids <thread>:<last comment id> ...` with every unresolved thread. The router queues a fix only for threads it hasn't dispatched in that version. The umbrella still schedules and runs the polls (`SKILL.md`, Polling belongs to the umbrella).
 6. **On user decisions the router can't see:**
    - `event dependency-met --name <dependency as written in the handoff>`
    - `event trigger-p6` when the user asks for P6
    - `event close --note <sign-off>` after the user signs off
-7. **When the umbrella is resumed or replaced:** run `event umbrella --session <id>` first, on every open milestone. Each recorded session id, together with the timestamps in `run.jsonl`, lets the umbrella's tokens be sliced per transition later. `<id>` is the umbrella's own session or thread id: in Claude Code the transcript file name under `~/.claude/projects/`, in Codex the thread id. If it isn't known, leave it out and say so in `STATE.md`. Recording the same id twice in a row is a no-op.
-8. **Before writing `STATE.md`:** paste the output of `status` into its generated block.
+7. **When the umbrella is resumed or replaced:** run `event umbrella --session <id>` first, on every open milestone. Each recorded session id, together with the timestamps in `run.jsonl`, lets the umbrella's tokens be sliced per transition later. `<id>` is the umbrella's own session or thread id: in Claude Code the transcript file name under `~/.claude/projects/`, in Codex the thread id. If it isn't known, leave it out and note that with `artifex_state.py decide`. Recording the same id twice in a row is a no-op.
+8. **When the user asks where things stand:** `status` covers one milestone; `artifex_state.py render` covers the initiative with every milestone's router status, and `render --out <initiative folder>/STATE.md` writes it as a file.
 
 `--dry-run` prints actions without recording dispatches. Use it for a look ahead.
+
+## Command cheat sheet
+
+Prefix: `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. Arguments in `[]` are optional.
+
+| Command | When |
+|---|---|
+| `init --milestone <id> --ticket <id> --umbrella-session <id> [--track bug] [--code-pattern <regex>] [--doc-pattern <glob>]` | Once per milestone |
+| `handoff --kind implementation\|verification <path>` | A handoff (or diagnosis) is written or changed |
+| `result <path> [--override "<reason>"]` | An agent returned its result file path |
+| `next [--dry-run]` | Nothing new happened and you want the actions again |
+| `status` | The user asks about one milestone |
+| `event started --run-id <id> [--agent <harness id>]` | A printed spawn is confirmed running |
+| `event run-failed --run-id <id> [--reason "<why>"]` | A spawn failed, or an agent ended without a result file |
+| `event poll --kind ci --outcome passing\|failing\|pending\|none [--head <sha>]` | After a CI poll |
+| `event poll --kind threads [--ids <thread>:<comment> ...]` | After a PR-thread poll, with every unresolved thread |
+| `event context [--branch <b>] [--workdir <path>] [--target <b>] [--note "<source>"]` | The user settles a `TBD` in the implementation handoff |
+| `event complete --run-id <id> --head <sha> [--pr-url <url>] --note "<what the user did>" [--override "<reason>"]` | A halted P3 run needs no more agent work after the user's answer |
+| `event resume --note "<decision>" [--request P3\|P4\|P5\|P6] [--origin p4\|p5\|ci\|threads\|resume] [--input "<text>" ...] [--grant review\|p5_rework]` | Any other halt, once handled |
+| `event dependency-met --name <dependency>` | A `depends_on` item landed |
+| `event trigger-p6` | The user asks for P6 |
+| `event close --note "<sign-off>"` | The user signs off |
+| `event umbrella --session <id>` | A resumed or replacement umbrella, first thing |
 
 ## Handoff frontmatter
 
@@ -49,12 +74,14 @@ The router reads only the frontmatter, not the body. Keep the values literal.
 
 ```yaml
 ---
-branch: dev/proj-123-batch-lookup    # implementation handoff: required
-workdir: D:\src\proj-wt-123          # required
-target: main                         # required: the PR's target branch
+branch: dev/proj-123-batch-lookup    # implementation handoff
+workdir: D:\src\proj                 # the checkout or worktree the user confirmed
+target: main                         # the PR's target branch
 depends_on: none                     # or a list; each item is released by dependency-met
 ---
 ```
+
+`branch`, `workdir` and `target` may be `TBD` when the user hasn't settled them by the time the specs are approved. The router records the handoff, posts which values are open and holds P3 until the umbrella records the user's answer with `event context`. It then passes those values to the implementation agent as `handoff_context`, which replaces the placeholders. The handoff file isn't rewritten for this and P2 isn't involved. Once P3 has started or a PR exists, these values are fixed.
 
 ```yaml
 ---
@@ -137,6 +164,8 @@ A result that fails any check halts the router as `result_rejected`, and the run
 | P3 push after the review passed | Code or test change | One incremental round. P5 reruns after it if it had run |
 | P3 push after the review passed | Docs only, a rebase with unchanged patches, or a clean merge of the target | Records it; the review and P5 carry forward |
 | Spawn failed, or the agent ended without a result | First failure of that work | Retries once. A failed review run doesn't use a round |
+| Spawn printed but never confirmed | — | Prints the same spawn again on every call until `started` or `run-failed` |
+| CI poll `none` | — | Stops waiting on CI; sign-off no longer says to keep polling |
 
 Push classes come from git, and the classification leans toward `code`:
 
@@ -156,8 +185,8 @@ Concurrency rules:
 
 | Halt | Typical umbrella move |
 |---|---|
-| `needs_decision` | Ask the user. Then `event resume --note <decision> --request P3 --input <decision note>`, adding `--origin p4` or `--origin p5` if the run was a rework, so its push starts the right round |
-| `blocked`, `inconclusive` | Get what is missing, then resume with `--request` for the phase to rerun |
+| `needs_decision` | Ask the user. If the answer leaves P3 nothing to do, finish it with `event complete` (below). Otherwise `event resume --note <decision> --request P3 --input <decision note>`, adding `--origin p4` or `--origin p5` if the run was a rework, so its push starts the right round |
+| `blocked`, `inconclusive` | Get what is missing. If the user supplied it and P3 has no work left (they opened the PR, or the branch already holds the commit), finish it with `event complete`. Otherwise resume with `--request` for the phase to rerun |
 | `review_cap`, `p5_rework_cap` | Escalate with each round's findings (`workflows/P4-review.md`, `SKILL.md`, Rework cap). If the user allows another attempt: `--grant review` or `--grant p5_rework`, plus `--request P3 --origin p4\|p5 --input <findings>` |
 | `route` (P2 or P1), `major_finding` (D1) | Needs the user, as the workflows describe. After a changed handoff, record it again, then resume |
 | `result_rejected` | See What the router checks |
@@ -165,9 +194,11 @@ Concurrency rules:
 
 `resume` clears every halt reason at once, and it refuses while a rejected run is still open.
 
+**Finishing a halted P3 run without an agent.** Starting a sub agent only to write down what the user just did costs a spawn and several umbrella turns. `event complete --run-id <the halted run> --head <sha> --pr-url <url> --note "<what the user did>"` records the run as completed by the umbrella instead. It applies only to a P3 run halted as `blocked` or `needs_decision`. The router runs the same checks as for an agent's result (`origin/<branch>` at that head, no internal codes, new commits for a rework) and refuses on a problem unless `--override` gives the user's reason. Then it routes exactly as a completed P3 result would: the first PR starts review round 1, a rework starts its round. If any code change is still needed, this isn't the tool: resume and let an agent do it.
+
 ## Limits
 
 - **Not a lock.** The single umbrella is the only caller, and two router processes on one milestone at once are not protected against.
 - **Polls are the umbrella's job.** The router doesn't fetch CI or PR threads, so it stays provider-neutral.
-- **Approvals stay in `STATE.md`.** The router trusts that a handoff is recorded only after its controlling approval (`policies/core.md`). It gates on the handoff being recorded and unchanged, not on the approval itself.
-- **Bug track with P5 not applicable.** When the diagnosis has no auto scenario because CI runs the regression test, the router posts sign-off once the review passes. The umbrella still confirms CI is passing (`CI:` in `status`) before asking (`workflows/D1-bug-investigation.md`, Verification).
+- **Approvals stay in `state.json`.** The router trusts that a handoff is recorded only after its controlling approval (`policies/core.md`). It gates on the handoff being recorded and unchanged, not on the approval itself.
+- **Bug track with P5 not applicable.** When the diagnosis has no auto scenario because CI runs the regression test, the router posts sign-off once the review passes. The umbrella still confirms CI is passing (`CI:` in `status`, or `none` when the repository has no CI) before asking (`workflows/D1-bug-investigation.md`, Verification).

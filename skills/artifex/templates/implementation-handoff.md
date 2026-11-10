@@ -1,6 +1,6 @@
 ---
-branch: <branch name the sub agent works on>
-workdir: <checkout or worktree path, confirmed by the user>
+branch: <branch name the sub agent works on, or TBD>
+workdir: <checkout or worktree path confirmed by the user, or TBD>
 target: <the PR's target branch>
 depends_on: <none, or [items that must land first]>
 ---
@@ -9,7 +9,7 @@ depends_on: <none, or [items that must land first]>
 The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter); keep values literal.
 
 Approved specs, or the diagnosis for a bug: <path@revision>
-Branch, working directory, target and dependencies: see frontmatter.
+Branch, working directory, target and dependencies: see frontmatter. A `TBD` there is settled later with the user; the umbrella then passes the value as `handoff_context`, which replaces it.
 Run by: an isolated implementation sub agent, started by the umbrella, using the `artifex` skill and `workflows/P3-implementation.md`.
 Implementation sub agent model / effort: <resolved selections from `SKILL.md`, Model allocation; any override and reason>
 Agent type: <native configured type matching the selection, or the default; limit tools when supported>

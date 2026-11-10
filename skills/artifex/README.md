@@ -32,7 +32,7 @@ Approvals are tied to a specific revision of a specific artifact. Closing a mile
 
 This package can't spawn agents, lock files, ensure atomic writes, enforce approvals or isolate worktrees. The umbrella coordinates those only where the environment provides tooling. Approval records in files are evidence, not access controls.
 
-One deterministic piece is included: `scripts/artifex_flow.py`, a router for the P3–P6 loop. It decides what runs next, applies the review and rework caps, classifies pushes from git and checks each agent's result against its artifacts before acting on it. The umbrella carries out its actions and handles only the exceptions it raises. It needs Python 3.10+ and git 2.36+, and has no other dependencies. See `references/orchestration.md`; tests run with `python -m unittest test_artifex_flow` from `scripts/`.
+One deterministic piece is included: `scripts/artifex_flow.py`, a router for the P3–P6 loop. It decides what runs next, applies the review and rework caps, classifies pushes from git and checks each agent's result against its artifacts before acting on it. The umbrella carries out its actions and handles only the exceptions it raises. It needs Python 3.10+ and git 2.36+, and has no other dependencies. See `references/orchestration.md`. Beside it, `scripts/artifex_state.py` keeps the umbrella's structured state in `state.json` and renders a `STATE.md` only when the user asks (`references/state.md`). Tests run with `python -m unittest test_artifex_flow test_artifex_state` from `scripts/`.
 
 ## Layout
 
@@ -43,7 +43,7 @@ One deterministic piece is included: `scripts/artifex_flow.py`, a router for the
 | `workflows/`  | One procedure per phase                                                                 |
 | `templates/`  | Starting points for each artifact                                                       |
 | `references/` | Optional extras, such as a remote status page, and the router reference                 |
-| `scripts/`    | The P3–P6 router and its tests                                                          |
+| `scripts/`    | The P3–P6 router, the state store, and their tests                                      |
 
 ## Optional tools
 

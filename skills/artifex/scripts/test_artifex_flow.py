@@ -41,12 +41,14 @@ class Sim:
         self.checkpoints.extend(cps)
         return cps
 
-    def step(self, siblings=(), hash_of=None):
+    def step(self, siblings=(), hash_of=None, start=True):
         actions = af.next_actions(self.state, siblings, hash_of)
         for a in actions:
-            if a["action"] == "spawn":
+            if a["action"] == "spawn" and a["run_id"] not in self.state["active"]:
                 self.apply({"type": "dispatched", "run_id": a["run_id"], "phase": a["phase"],
                             "round": a.get("round"), "head": a["inputs"].get("head")})
+            if a["action"] == "spawn" and start:
+                self.apply({"type": "started", "run_id": a["run_id"]})
         return actions
 
     def spawned(self, siblings=()):
@@ -598,7 +600,7 @@ class CliTests(unittest.TestCase):
                                                pr_url="https://example/pr/1"))
         self.assertEqual([c["kind"] for c in out["checkpoints"]], ["pr_opened"])
         self.assertEqual(out["actions"][0]["phase"], "P4")
-        self.assertIn("Active runs: M1-P4-1 (P4)", self.cli("status"))
+        self.assertIn("Active runs: M1-P4-1 (P4, not confirmed started)", self.cli("status"))
 
     def test_unpushed_head_and_internal_codes_are_rejected(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
@@ -635,6 +637,174 @@ class CliTests(unittest.TestCase):
         before = (self.mdir / "run.jsonl").read_text(encoding="utf-8")
         self.cli("event", "resume", "--note", "x", expect=2)
         self.assertEqual((self.mdir / "run.jsonl").read_text(encoding="utf-8"), before)
+
+    def blocked_p3(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        self.cli("event", "started", "--run-id", p3["run_id"])
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        git(self.repo.work, "push", "-q", "origin", "feature")
+        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="blocked", head=head,
+                                               summary="pushed; gh is not authenticated, no PR"))
+        self.assertEqual(out["actions"][0]["action"], "halted")
+        return p3["run_id"], head
+
+    def test_umbrella_completes_a_blocked_run_and_review_starts(self):
+        run_id, head = self.blocked_p3()
+        out = self.cli("event", "complete", "--run-id", run_id, "--head", head,
+                       "--pr-url", "https://example/pr/1", "--note", "user opened the PR")
+        self.assertIn("pr_opened", [c["kind"] for c in out["checkpoints"]])
+        self.assertEqual((out["actions"][0]["action"], out["actions"][0]["phase"]), ("spawn", "P4"))
+        self.assertEqual(af.read_events(self.mdir)[-2]["push"], {"class": "initial"})
+
+    def test_complete_refuses_a_head_that_is_not_on_the_remote(self):
+        run_id, _ = self.blocked_p3()
+        local = self.repo.commit("feature.py", "x = 2\n", "not pushed")
+        self.cli("event", "complete", "--run-id", run_id, "--head", local,
+                 "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
+        self.cli("event", "complete", "--run-id", run_id, "--head", local, "--pr-url", "https://example/pr/1",
+                 "--note", "x", "--override", "user pushes it next")
+
+    def test_placeholder_handoff_waits_for_context_then_spawns_with_it(self):
+        (self.mdir / "implementation-handoff.md").write_text(
+            "---\nbranch: TBD\nworkdir: <confirmed by the user>\ntarget: main\ndepends_on: none\n---\n",
+            encoding="utf-8")
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        out = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
+        self.assertEqual(out["checkpoints"][-1]["open"], ["branch", "workdir"])
+        self.assertEqual(out["actions"][0]["action"], "wait")
+        out = self.cli("event", "context", "--branch", "feature", "--workdir", str(self.repo.work))
+        p3 = out["actions"][0]
+        self.assertEqual(p3["action"], "spawn")
+        self.assertEqual(p3["inputs"]["handoff_context"], {"branch": "feature", "workdir": str(self.repo.work)})
+
+
+class DispatchConfirmationTests(unittest.TestCase):
+    def test_unconfirmed_spawn_is_printed_again_with_the_same_run_id(self):
+        sim = Sim()
+        first, = sim.step(start=False)
+        again, = sim.step(start=False)
+        self.assertEqual(again["run_id"], first["run_id"])
+        self.assertIn("unconfirmed", again)
+        self.assertNotIn("unconfirmed", first)
+        self.assertEqual(sim.state["seq"]["P3"], 1)
+        sim.apply({"type": "started", "run_id": first["run_id"]})
+        self.assertEqual(sim.step()[0]["action"], "wait")
+
+    def test_reprinted_review_keeps_its_round(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], head=sha(1), push="initial")
+        p4, = sim.step(start=False)
+        again, = sim.step(start=False)
+        self.assertEqual((again["round"], sim.state["review"]["rounds"]), (1, 1))
+
+    def test_spawn_that_never_happened_is_retried_through_run_failed(self):
+        sim = Sim()
+        p3, = sim.step(start=False)
+        sim.apply({"type": "run_failed", "run_id": p3["run_id"], "reason": "spawn never happened"})
+        retry, = sim.spawned()
+        self.assertEqual(retry["run_id"], "M1-P3-2")
+
+
+class HandoffContextTests(unittest.TestCase):
+    def sim(self, **fields):
+        sim = Sim(verification=False)
+        sim.state = af.new_state()
+        sim.apply({"type": "init", "milestone": "M1", "ticket": "T-1"})
+        base = {"branch": "b", "workdir": "w", "target": "main", "depends_on": []}
+        sim.apply({"type": "handoff", "kind": "implementation", "path": "implementation-handoff.md",
+                   "sha256": "i" * 64, "fields": {**base, **fields}})
+        return sim
+
+    def test_placeholders_hold_implementation(self):
+        sim = self.sim(workdir="TBD", branch="<branch>")
+        self.assertEqual(af.open_fields(sim.state), ["branch", "workdir"])
+        wait, = sim.step()
+        self.assertIn("event context", wait["reason"])
+
+    def test_context_survives_a_rerecorded_handoff(self):
+        sim = self.sim(workdir="TBD")
+        sim.apply({"type": "context", "fields": {"workdir": "D:/repo"}})
+        sim.apply({"type": "handoff", "kind": "implementation", "path": "implementation-handoff.md",
+                   "sha256": "j" * 64, "fields": {"branch": "b", "workdir": "TBD", "target": "main"}})
+        self.assertEqual(af.impl_fields(sim.state)["workdir"], "D:/repo")
+
+    def test_context_is_refused_once_implementation_runs(self):
+        sim = self.sim(workdir="TBD")
+        sim.apply({"type": "context", "fields": {"workdir": "D:/repo"}})
+        sim.spawned()
+        with self.assertRaises(af.FlowError):
+            sim.apply({"type": "context", "fields": {"branch": "other"}})
+
+
+class UmbrellaCompleteTests(unittest.TestCase):
+    def complete(self, sim, run_id, head, **extra):
+        env = {"run_id": run_id, "phase": "P3", "status": "completed", "head": head,
+               "pr_url": "https://example/pr/1"}
+        return sim.apply({"type": "complete", "result": env, "problems": [], "push": {"class": "initial"}, **extra})
+
+    def test_blocked_p3_completed_by_umbrella_starts_review(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], status="blocked", summary="no gh auth")
+        self.complete(sim, p3["run_id"], sha(1))
+        self.assertEqual(sim.state["halt"], [])
+        self.assertIn("pr_opened", sim.kinds())
+        self.assertEqual(sim.spawned()[0]["phase"], "P4")
+
+    def test_needs_decision_rework_completed_without_an_agent_keeps_its_origin(self):
+        sim = Sim()
+        sim.to_review_pass()
+        sim.apply({"type": "poll", "kind": "threads", "ids": ["t1:c1"]})
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], status="needs_decision", question="Reply only?")
+        self.assertEqual(sim.state["halt"][0]["origins"], ["threads"])
+
+    def test_only_halted_implementation_runs_can_be_completed(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        with self.assertRaises(af.FlowError):
+            self.complete(sim, p3["run_id"], sha(1))
+        sim.result(p3["run_id"], head=sha(1), push="initial")
+        p4, = sim.spawned()
+        sim.result(p4["run_id"], status="blocked")
+        with self.assertRaises(af.FlowError):
+            self.complete(sim, p4["run_id"], sha(1))
+
+    def test_problems_refuse_unless_overridden(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], status="blocked")
+        with self.assertRaises(af.FlowError):
+            self.complete(sim, p3["run_id"], sha(1), problems=["origin/b is at 000, not the reported"])
+        self.complete(sim, p3["run_id"], sha(1), problems=["x"], override="user accepts")
+        self.assertIn("override", sim.kinds())
+
+
+class NoCiTests(unittest.TestCase):
+    def test_no_ci_is_posted_once_and_survives_pushes(self):
+        sim = Sim(auto=())
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], head=sha(1), push="initial")
+        cps = sim.apply({"type": "poll", "kind": "ci", "outcome": "none", "head": sha(1)})
+        self.assertTrue(cps[0]["post"])
+        self.assertFalse(sim.apply({"type": "poll", "kind": "ci", "outcome": "none"})[0]["post"])
+        p4, = sim.spawned()
+        sim.result(p4["run_id"], head=sha(1))
+        reason = sim.step()[0]["reason"]
+        self.assertNotIn("keep polling", reason)
+        af.record_push(sim.state, sha(2), {"class": "docs"})
+        self.assertEqual(sim.state["ci"], "none")
+
+
+class EvidenceDirTests(unittest.TestCase):
+    def test_verification_spawns_name_an_evidence_folder(self):
+        sim = Sim()
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        self.assertEqual(p5["evidence_dir"], f"evidence/{p5['run_id']}")
 
 
 if __name__ == "__main__":
