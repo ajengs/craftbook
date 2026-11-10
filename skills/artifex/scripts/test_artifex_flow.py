@@ -636,6 +636,13 @@ class CliTests(unittest.TestCase):
         self.cli("event", "resume", "--note", "x", expect=2)
         self.assertEqual((self.mdir / "run.jsonl").read_text(encoding="utf-8"), before)
 
+    def test_version_flag_prints_the_router_version_and_exits_zero(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as exc:
+            af.main(["--version"])
+        self.assertEqual(exc.exception.code, 0)
+        self.assertIn(af.ROUTER_VERSION, out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
