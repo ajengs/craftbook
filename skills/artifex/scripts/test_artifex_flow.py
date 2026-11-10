@@ -680,6 +680,40 @@ class CliTests(unittest.TestCase):
         self.assertEqual(p3["inputs"]["handoff_context"], {"branch": "feature", "workdir": str(self.repo.work)})
 
 
+    def test_dir_is_accepted_before_or_after_the_event_name(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = af.main(["event", "started", "--run-id", p3["run_id"], "--dir", str(self.mdir)])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertEqual(json.loads(out.getvalue())["checkpoints"][-1]["kind"], "started")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                af.main(["event", "started", "--run-id", p3["run_id"]])
+
+    def test_first_handoff_suggests_compacting_the_umbrella(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        handoff = str(self.mdir / "implementation-handoff.md")
+        compact = [c for c in self.cli("handoff", "--kind", "implementation", handoff)["checkpoints"]
+                   if c["kind"] == "compact_umbrella"]
+        self.assertTrue(compact and compact[0]["post"])
+        again = self.cli("handoff", "--kind", "implementation", handoff)["checkpoints"]
+        self.assertNotIn("compact_umbrella", [c["kind"] for c in again])
+
+    def test_local_target_ahead_of_origin_halts_before_implementation(self):
+        git(self.repo.work, "checkout", "-q", "main")
+        self.repo.commit("local.py", "z = 1\n", "unpushed on the target")
+        git(self.repo.work, "checkout", "-q", "feature")
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        out = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
+        held = [c for c in out["checkpoints"] if c["kind"] == "target_unpushed"]
+        self.assertEqual(held[0]["commits"], 1)
+        self.assertEqual(out["actions"][0]["action"], "halted")
+        out = self.cli("event", "resume", "--note", "user accepts the extra commit in this PR")
+        self.assertEqual((out["actions"][0]["action"], out["actions"][0]["phase"]), ("spawn", "P3"))
+
     def test_runs_report_lists_agent_ids_and_windows(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "u1")
         p3 = self.cli("handoff", "--kind", "implementation",

@@ -65,10 +65,20 @@ class StateCliTests(unittest.TestCase):
         self.cli("remove", "blockers", "missing", expect=2)
         self.assertEqual(self.state()["revision"], before)
 
+    def test_milestone_status_is_refused_once_the_router_runs_it(self):
+        self.cli("upsert", "milestones", "M1", "scope=x", "status=draft")
+        mdir = self.dir / "milestones" / "M1"
+        mdir.mkdir(parents=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            af.main(["init", "--dir", str(mdir), "--milestone", "M1", "--ticket", "CRAFT-1"])
+        self.cli("upsert", "milestones", "M1", "status=implementing", expect=2)
+        self.cli("upsert", "milestones", "M1", "scope=y")
+        self.assertIn("| M1 | y | router: running |", self.cli("render"))
+
     def test_render_shows_latest_state_and_router_status(self):
         self.cli("set", "status", "phase=P2", "next=stale step")
         self.cli("set", "status", "next=Approve the specs")
-        self.cli("upsert", "milestones", "M1", "scope=version flag", "status=implementing")
+        self.cli("upsert", "milestones", "M1", "scope=version flag")
         mdir = self.dir / "milestones" / "M1"
         mdir.mkdir(parents=True)
         with contextlib.redirect_stdout(io.StringIO()):

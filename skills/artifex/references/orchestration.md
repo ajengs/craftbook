@@ -25,7 +25,7 @@ Each file has one writer. Never edit `run.jsonl` by hand; record an event instea
 
 Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. Every command except `status` prints `{"checkpoints": [...], "actions": [...]}`.
 
-1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id> [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
+1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id> [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. The first implementation handoff returns a `compact_umbrella` checkpoint: everything P1 and P2 settled is on disk by then, so compact the umbrella if the host lets it, or post the suggestion to the user (`SKILL.md`, Execution efficiency). Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
 2. **Carry out the actions in order:**
    - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> --agent <harness id>`; chain it with your next router call rather than spending a turn on it. Pass `--agent` whenever the harness returns an id: it is how that run's cost is found later. In Claude Code it is the agent id the Agent tool returns, whose transcript is `~/.claude/projects/<project>/<umbrella session>/subagents/agent-<id>.jsonl`; in Codex it is the thread id. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
    - `spawn` with `unconfirmed`: the router printed this run before and never got `started`. If the agent is in fact running, record `started`; if it never started, spawn it now; if it can't be started, record `run-failed`. The router never assumes a printed spawn happened, so a lost spawn can't leave it waiting forever.
@@ -49,7 +49,7 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
 
 ## Command cheat sheet
 
-Prefix: `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. Arguments in `[]` are optional.
+Prefix: `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. For `event`, `--dir` may also come after the event name (`event started --run-id … --dir …`). Arguments in `[]` are optional.
 
 | Command | When |
 |---|---|
@@ -193,6 +193,7 @@ Concurrency rules:
 | `review_cap`, `p5_rework_cap` | Escalate with each round's findings (`workflows/P4-review.md`, `SKILL.md`, Rework cap). If the user allows another attempt: `--grant review` or `--grant p5_rework`, plus `--request P3 --origin p4\|p5 --input <findings>` |
 | `route` (P2 or P1), `major_finding` (D1) | Needs the user, as the workflows describe. After a changed handoff, record it again, then resume |
 | `result_rejected` | See What the router checks |
+| `target_unpushed` | Raised when the implementation handoff (or `event context`) names a target whose local branch is ahead of `origin/<target>`, before any P3 starts: a branch cut from it would carry those commits into the PR unreviewed. Ask the user whether to push the target, base the branch on `origin/<target>`, or accept the extra commits in this PR. Then `event resume --note <their choice>`; if the base changes, update the handoff's branch or workdir first |
 | `run_failed` | The retry failed too. Look at why before resuming |
 
 `resume` clears every halt reason at once, and it refuses while a rejected run is still open.

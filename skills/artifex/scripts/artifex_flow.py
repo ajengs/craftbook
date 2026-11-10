@@ -229,6 +229,11 @@ def on_handoff(state, ev):
         out.append(checkpoint("handoff_modified", f"{kind} handoff changed: {ev['path']}", post=False))
     if kind == "implementation" and previous is None and state["pr"]["url"] is None:
         request(state, "P3", "initial")
+        out.append(checkpoint(
+            "compact_umbrella", "Good point to compact the umbrella: what P1 and P2 settled is now in the artifacts, "
+            "state.json and run.jsonl. Compact now if the host allows it; otherwise suggest it to the user"))
+    if kind == "implementation":
+        out.extend(_target_ahead(state, ev.get("target_ahead")))
     if kind == "implementation" and open_fields(state):
         left = open_fields(state)
         out.append(checkpoint("handoff_open", f"The implementation handoff leaves {', '.join(left)} open; "
@@ -236,6 +241,16 @@ def on_handoff(state, ev):
     if kind == "verification":
         out.extend(after_review(state, from_pass=False))
     return out
+
+
+def _target_ahead(state, ahead) -> list:
+    if not ahead:
+        return []
+    target = impl_fields(state).get("target")
+    return [halt(state, "target_unpushed",
+                 f"Local {target} is {ahead['commits']} commit(s) ahead of origin/{target}. A branch cut from it "
+                 f"puts those commits in the PR too. Ask the user to push {target}, or to base the branch on "
+                 f"origin/{target}, or to accept them in this PR; then resume", **ahead)]
 
 
 def on_dispatched(state, ev):
@@ -282,7 +297,7 @@ def on_context(state, ev):
             impl["fields"] = {**impl["fields"], key: value}
     left = open_fields(state)
     message = "Handoff context recorded" + (f"; still open: {', '.join(left)}" if left else "")
-    return [checkpoint("context", message, post=False)]
+    return [checkpoint("context", message, post=False)] + _target_ahead(state, ev.get("target_ahead"))
 
 
 def on_complete(state, ev):
@@ -820,6 +835,24 @@ def classify_push(git: Git, old: str, new: str, target_ref: str, doc_patterns) -
     return dict(push, **{"class": "code", "reason": "history rewritten with changed patches"})
 
 
+def target_ahead(fields: dict):
+    """Commits on the local target branch that origin doesn't have, or None."""
+    workdir, target = fields.get("workdir"), fields.get("target")
+    if is_placeholder(workdir) or is_placeholder(target) or not Path(str(workdir)).exists():
+        return None
+    git = Git(workdir)
+    try:
+        git.run("fetch", "--quiet", "origin", target, check=False)
+        local = git.run("rev-parse", "--verify", "--quiet", f"refs/heads/{target}", check=False).stdout.strip()
+        remote = git.run("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{target}", check=False).stdout.strip()
+        if not local or not remote:
+            return None
+        count = int(git.out("rev-list", "--count", f"{remote}..{local}"))
+    except (GitError, ValueError, OSError):
+        return None
+    return {"commits": count, "local": local, "origin": remote} if count else None
+
+
 def internal_code_hits(git: Git, base: str, tip: str, patterns) -> list:
     messages = git.out("log", "--format=%B", f"{base}..{tip}")
     diff = git.out("diff", "--no-color", "-U0", base, tip)
@@ -1072,8 +1105,12 @@ def cmd_handoff(args):
         raise FlowError(f"{path.name} has no frontmatter; use the template's, with TBD for anything not settled")
     for name in HANDOFF_FIELDS[args.kind]:
         fields.setdefault(name, "TBD")
-    session.record({"type": "handoff", "kind": args.kind, "path": relative(args.dir, path),
-                    "sha256": file_sha(path), "fields": fields})
+    ev = {"type": "handoff", "kind": args.kind, "path": relative(args.dir, path), "sha256": file_sha(path),
+          "fields": fields}
+    first = args.kind == "implementation" and "implementation" not in session.state["handoffs"]
+    if first:
+        ev["target_ahead"] = target_ahead(fields)
+    session.record(ev)
     return session.respond(dispatch=not args.dry_run)
 
 
@@ -1118,6 +1155,10 @@ def cmd_event(args):
         if not fields:
             raise FlowError("give at least one of --branch, --workdir, --target")
         ev = {"type": "context", "fields": fields, "note": args.note}
+        impl = session.state["handoffs"].get("implementation")
+        if impl and ({"workdir", "target"} & set(fields)):
+            merged = {**impl["fields"], **{k: v for k, v in impl.get("context", {}).items()}, **fields}
+            ev["target_ahead"] = target_ahead(merged)
     elif kind == "complete":
         ev = complete_event(session, args)
     else:
@@ -1216,7 +1257,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def command(name, **kw):
         p = sub.add_parser(name, **kw)
-        p.add_argument("--dir", type=Path, required=True, help="milestone folder")
+        # `event` also takes --dir after its subcommand, so it can't be required here.
+        p.add_argument("--dir", type=Path, required=name != "event", help="milestone folder")
         if name not in ("status", "runs"):
             p.add_argument("--dry-run", action="store_true", help="print actions without recording dispatch")
         return p
@@ -1277,6 +1319,9 @@ def build_parser() -> argparse.ArgumentParser:
     umbrella.add_argument("--session", required=True)
     close = events.add_parser("close")
     close.add_argument("--note", required=True)
+    for event_parser in events.choices.values():
+        event_parser.add_argument("--dir", type=Path, default=argparse.SUPPRESS, help="milestone folder")
+        event_parser.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS)
     p.set_defaults(func=cmd_event)
 
     p = command("next")
@@ -1291,7 +1336,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if getattr(args, "dir", None) is None:
+        parser.error("--dir is required")
     try:
         output = args.func(args)
     except FlowError as error:

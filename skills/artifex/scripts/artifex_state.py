@@ -136,6 +136,12 @@ def cmd_upsert(store: Store, args):
         raise StateError(f"unknown table {args.table!r}; tables: {', '.join(TABLES)}")
     fields = parse_pairs(args.pairs, TABLES[args.table])
     state = store.load()
+    if args.table == "milestones" and "status" in fields and fields["status"] is not None:
+        folder = (state["milestones"].get(args.name) or {}).get("folder") or fields.get("folder") \
+            or f"milestones/{args.name}"
+        mdir = Path(folder) if Path(folder).is_absolute() else store.folder / folder
+        if (mdir / "run.jsonl").exists():
+            raise StateError(f"{args.name} is run by the router; its status comes from run.jsonl, not state.json")
     row = state[args.table].setdefault(args.name, {})
     merge(row, fields)
     return store.save(state)
@@ -189,13 +195,18 @@ def render(folder: Path, state: dict) -> str:
            f"Rendered from `state.json` revision {state['revision']} ({state['updated']}). "
            "Regenerate rather than edit; the umbrella doesn't read this file.", "",
            "## Status", *_fields(state["status"]), ""]
-    milestones = state["milestones"]
-    out += ["## Milestones", *_table(milestones, TABLES["milestones"]), ""]
-    for name, row in milestones.items():
+    milestones, routed = {}, []
+    for name, row in state["milestones"].items():
         mdir = folder / (row.get("folder") or f"milestones/{name}")
         if (mdir / "run.jsonl").exists():
-            status = artifex_flow.render_status(artifex_flow.fold(artifex_flow.read_events(mdir)))
-            out += [f"### Router — {name}", "```text", status, "```", ""]
+            router_state = artifex_flow.fold(artifex_flow.read_events(mdir))
+            row = {**row, "status": "router: " + ("closed" if router_state["closed"] else
+                                                  "halted" if router_state["halt"] else "running")}
+            routed.append((name, artifex_flow.render_status(router_state)))
+        milestones[name] = row
+    out += ["## Milestones", *_table(milestones, TABLES["milestones"]), ""]
+    for name, status in routed:
+        out += [f"### Router — {name}", "```text", status, "```", ""]
     if state["blockers"]:
         out += ["## Blockers", *_table(state["blockers"], TABLES["blockers"]), ""]
     out += ["## Approved artifacts", *_table(state["artifacts"], TABLES["artifacts"]), ""]
