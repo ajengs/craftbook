@@ -125,6 +125,54 @@ class HappyPathTests(unittest.TestCase):
         self.assertEqual(sim.kinds()[-1], "ready_for_acceptance")
 
 
+class IdleReasonTests(unittest.TestCase):
+    def idle(self, sim):
+        action, = sim.step()
+        self.assertEqual(action["action"], "idle")
+        return action["reason"]
+
+    def test_waits_for_verification_handoff(self):
+        sim = Sim(verification=False)
+        sim.to_review_pass()
+        self.assertIn("waiting for the verification handoff", self.idle(sim))
+
+    def test_waits_for_p6_trigger_after_p5_passes(self):
+        sim = Sim(auto=("V1",), manual=("V2",))
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        sim.result(p5["run_id"], head=sha(1), scenarios={"V1": "pass"})
+        self.assertIn("P6 trigger", self.idle(sim))
+
+    def test_waits_for_sign_off_and_flags_unconfirmed_ci(self):
+        sim = Sim(auto=(), manual=())
+        sim.to_review_pass()
+        self.assertIn("sign-off", self.idle(sim))
+        self.assertIn("CI is unknown", self.idle(sim))
+        sim.apply({"type": "poll", "kind": "ci", "outcome": "passing", "head": sha(1)})
+        self.assertNotIn("CI is", self.idle(sim))
+
+    def test_status_names_the_next_step(self):
+        sim = Sim(auto=(), manual=("V2",))
+        sim.to_review_pass()
+        self.assertIn("Router: running; next: P5 is done or not applicable; waiting for the user's P6 trigger",
+                      af.render_status(sim.state))
+        sim.apply({"type": "trigger_p6"})
+        self.assertIn("next: spawn M1-P6-1", af.render_status(sim.state))
+
+
+class UmbrellaSessionTests(unittest.TestCase):
+    def test_init_session_and_replacements_are_kept_in_order(self):
+        state = af.new_state()
+        af.apply(state, {"type": "init", "milestone": "M1", "ticket": "T-1", "umbrella_session": "s1"})
+        af.apply(state, {"type": "umbrella", "session": "s1"})
+        af.apply(state, {"type": "umbrella", "session": "s2"})
+        self.assertEqual(state["umbrella_sessions"], ["s1", "s2"])
+        self.assertIn("Umbrella session: s2 (2 in total)", af.render_status(state))
+
+    def test_status_says_when_no_session_was_recorded(self):
+        self.assertIn("Umbrella session: not recorded", af.render_status(Sim().state))
+
+
 class ReviewLoopTests(unittest.TestCase):
     def test_changes_requested_reworks_with_findings_then_next_round(self):
         sim = Sim()
@@ -573,6 +621,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.cli("next")["actions"][0]["action"], "wait")
         out = self.cli("handoff", "--kind", "implementation", str(handoff))
         self.assertEqual(out["actions"][0]["action"], "spawn")
+
+    def test_umbrella_session_is_logged_with_a_timestamp(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "s1")
+        self.cli("event", "umbrella", "--session", "s2")
+        events = af.read_events(self.mdir)
+        self.assertEqual(events[0]["umbrella_session"], "s1")
+        self.assertEqual((events[1]["type"], events[1]["session"]), ("umbrella", "s2"))
+        self.assertTrue(events[1]["ts"])
 
     def test_errors_exit_2_without_recording(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")

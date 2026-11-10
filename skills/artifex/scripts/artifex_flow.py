@@ -92,7 +92,7 @@ def new_state() -> dict:
         "p6": {"triggered": False, "passed_head": None},
         "requests": {}, "active": {}, "seq": {},
         "handled_threads": [], "pushes": [], "ci": "unknown",
-        "halt": [], "closed": False,
+        "halt": [], "closed": False, "umbrella_sessions": [],
     }
 
 
@@ -170,7 +170,19 @@ def on_init(state, ev):
     state.update(milestone=ev["milestone"], ticket=ev["ticket"], track=ev.get("track", "feature"))
     state["code_patterns"] = DEFAULT_CODE_PATTERNS + list(ev.get("code_patterns", []))
     state["doc_patterns"] = DEFAULT_DOC_PATTERNS + list(ev.get("doc_patterns", []))
+    if ev.get("umbrella_session"):
+        state["umbrella_sessions"].append(ev["umbrella_session"])
     return [checkpoint("initialized", f"Router started for {ev['milestone']}", post=False)]
+
+
+def on_umbrella(state, ev):
+    # Each event's timestamp in run.jsonl marks where this session's
+    # transcript takes over, which is what per-transition token slicing needs.
+    session = ev["session"]
+    if state["umbrella_sessions"] and state["umbrella_sessions"][-1] == session:
+        return [checkpoint("umbrella_unchanged", f"Umbrella session {session} already recorded", post=False)]
+    state["umbrella_sessions"].append(session)
+    return [checkpoint("umbrella_session", f"Umbrella session {session} recorded", post=False)]
 
 
 def on_handoff(state, ev):
@@ -460,7 +472,7 @@ def on_close(state, ev):
 HANDLERS = {
     "init": on_init, "handoff": on_handoff, "dispatched": on_dispatched, "run_failed": on_run_failed,
     "result": on_result, "poll": on_poll, "resume": on_resume, "dependency_met": on_dependency_met,
-    "trigger_p6": on_trigger_p6, "close": on_close,
+    "trigger_p6": on_trigger_p6, "close": on_close, "umbrella": on_umbrella,
 }
 
 
@@ -615,9 +627,26 @@ def next_actions(state: dict, siblings=(), hash_of=None) -> list:
             actions.append({"action": "wait", "phase": None,
                             "reason": "running: " + ", ".join(sorted(state["active"]))})
         else:
-            actions.append({"action": "idle",
-                            "reason": "nothing to dispatch; waiting for a poll, a user trigger or sign-off"})
+            actions.append({"action": "idle", "reason": idle_reason(state)})
     return actions
+
+
+def idle_reason(state: dict) -> str:
+    """Say what the router is waiting on, so the umbrella doesn't have to work it out."""
+    if state["pr"]["url"] is None:
+        return "no PR yet and nothing queued; record a resume with --request P3 if implementation should run"
+    if not review_settled(state):
+        return "the review cycle is open with nothing queued; waiting for a poll or a resume"
+    ver = state["handoffs"].get("verification")
+    if ver is None:
+        reason = "review passed; waiting for the verification handoff"
+    elif ver["fields"].get("manual") and not is_current(state, state["p6"]["passed_head"]):
+        reason = "P5 is done or not applicable; waiting for the user's P6 trigger (event trigger-p6)"
+    else:
+        reason = "ready for acceptance; waiting for the user's sign-off (event close)"
+    if state["ci"] != "passing":
+        reason += f"; CI is {state['ci']}, keep polling"
+    return reason
 
 
 # --------------------------------------------------------------------------
@@ -919,7 +948,8 @@ def cmd_init(args):
         raise FlowError(f"{args.dir / 'run.jsonl'} already exists")
     (args.dir / "results").mkdir(parents=True, exist_ok=True)
     session.record({"type": "init", "milestone": args.milestone, "ticket": args.ticket, "track": args.track,
-                    "code_patterns": args.code_pattern, "doc_patterns": args.doc_pattern})
+                    "code_patterns": args.code_pattern, "doc_patterns": args.doc_pattern,
+                    "umbrella_session": args.umbrella_session})
     return session.respond(dispatch=not args.dry_run)
 
 
@@ -971,6 +1001,8 @@ def cmd_event(args):
         ev = {"type": "dependency_met", "name": args.name}
     elif kind == "trigger-p6":
         ev = {"type": "trigger_p6"}
+    elif kind == "umbrella":
+        ev = {"type": "umbrella", "session": args.session}
     else:
         ev = {"type": "close", "note": args.note}
     session.record(ev)
@@ -988,7 +1020,13 @@ def render_status(state: dict) -> str:
     elif state["halt"]:
         router = "halted: " + "; ".join(h["message"] for h in state["halt"])
     else:
-        router = "running"
+        steps = []
+        for action in next_actions(state):
+            if action["action"] == "spawn":
+                steps.append(f"spawn {action['run_id']}")
+            else:
+                steps.append(action["reason"])
+        router = "running; next: " + "; ".join(steps)
     active = ", ".join(f"{rid} ({run['phase']})" for rid, run in state["active"].items()) or "none"
     queued = ", ".join(sorted(state["requests"])) or "none"
     cycle = "passed" if not review["open"] else "open"
@@ -1002,6 +1040,8 @@ def render_status(state: dict) -> str:
         f"{(review['last_reviewed_head'] or 'none')[:12]}",
         f"PR: {pr['url'] or 'none'}. Head: {(pr['head'] or 'none')[:12]}. Recent pushes: {pushes}",
         f"Active runs: {active}. Queued: {queued}",
+        f"Umbrella session: {(state['umbrella_sessions'] or ['not recorded'])[-1]}"
+        + (f" ({len(state['umbrella_sessions'])} in total)" if len(state["umbrella_sessions"]) > 1 else ""),
     ])
 
 
@@ -1022,6 +1062,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--track", choices=["feature", "bug"], default="feature")
     p.add_argument("--code-pattern", action="append", default=[], help="extra internal-code regex")
     p.add_argument("--doc-pattern", action="append", default=[], help="extra docs-only glob")
+    p.add_argument("--umbrella-session", help="the umbrella's own session or thread id")
     p.set_defaults(func=cmd_init)
 
     p = command("handoff")
@@ -1053,6 +1094,8 @@ def build_parser() -> argparse.ArgumentParser:
     dep = events.add_parser("dependency-met")
     dep.add_argument("--name", required=True)
     events.add_parser("trigger-p6")
+    umbrella = events.add_parser("umbrella", help="record a resumed or replacement umbrella session")
+    umbrella.add_argument("--session", required=True)
     close = events.add_parser("close")
     close.add_argument("--note", required=True)
     p.set_defaults(func=cmd_event)

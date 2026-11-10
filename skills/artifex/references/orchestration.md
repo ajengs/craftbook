@@ -24,7 +24,7 @@ Each file has one writer. Never edit `run.jsonl` by hand; record a `resume` even
 
 Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. Every command except `status` prints `{"checkpoints": [...], "actions": [...]}`.
 
-1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
+1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id> [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
 2. **Carry out the actions in order:**
    - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs` and `result_path` as its coordination brief, next to the handoff reference. Don't add to them. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
    - `wait`: nothing to do. The reason says what it is waiting on.
@@ -38,7 +38,8 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
    - `event dependency-met --name <dependency as written in the handoff>`
    - `event trigger-p6` when the user asks for P6
    - `event close --note <sign-off>` after the user signs off
-7. **Before writing `STATE.md`:** paste the output of `status` into its generated block.
+7. **When the umbrella is resumed or replaced:** run `event umbrella --session <id>` first, on every open milestone. Each recorded session id, together with the timestamps in `run.jsonl`, lets the umbrella's tokens be sliced per transition later. `<id>` is the umbrella's own session or thread id: in Claude Code the transcript file name under `~/.claude/projects/`, in Codex the thread id. If it isn't known, leave it out and say so in `STATE.md`. Recording the same id twice in a row is a no-op.
+8. **Before writing `STATE.md`:** paste the output of `status` into its generated block.
 
 `--dry-run` prints actions without recording dispatches. Use it for a look ahead.
 
