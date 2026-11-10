@@ -9,4 +9,5 @@ Work from the supplied implementation handoff and approved specs at their record
 Implement only the assigned scope and required checks. Apply the skill's core policies and execution efficiency guidance.
 Report new design decisions, unresolved ambiguities and persistent blockers to the umbrella before continuing affected work.
 Return changes, checks and evidence paths, checkpoints and blockers to the umbrella, which owns shared STATE.md and approval records.
+Finish by writing the result file to the result_path you were given (references/orchestration.md, Result file) and return only that path.
 """

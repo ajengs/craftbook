@@ -8,10 +8,11 @@ Updated: <timestamp>
 Phase: <P1–P6 | D1>
 Status: <draft | pending approval | implementing | in review | verifying | ready for acceptance | blocked | closed>
 Track: <feature | bug: direct, reproduced or confirm; linked to <milestone and finding> or none>
-Review round: <n of 3 | not started>. CI: <not checked | watching | failing | passing>
-P5 reworks: <n of 2>. Last reviewed head: <commit>
-Implementation: <none | active on <branch>, <working directory> | waiting: <reason>>. PR: <link | none>. PR polls: <CI | threads every 3 hours | done>
+PR polls: <CI | threads every 3 hours | done>
 Next: <one actionable step>
+
+### Router status (milestone only)
+<paste the output of `scripts/artifex_flow.py status --dir <milestone folder>`: router state, review cycle and rounds, CI, P5 reworks, heads, pushes, active and queued runs. Regenerate; don't edit by hand.>
 
 ## Coordination consent
 Status: <authorized | declined | manual relay>

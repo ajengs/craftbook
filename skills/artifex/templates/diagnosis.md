@@ -1,4 +1,10 @@
+---
+auto: <[reproduction id] when P5 runs it, or [] when CI runs the regression test>
+manual: <[reproduction id] for a manual reproduction, or []>
+---
 # Diagnosis — <bug>
+
+The frontmatter is read by the router, which records this diagnosis as the verification handoff (`references/orchestration.md`).
 
 Source: <ticket link | P5 finding in milestone <id>>
 Seen on: <version, head or environment>

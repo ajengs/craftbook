@@ -9,4 +9,5 @@ Work from the supplied approved artifact revisions, changeset and review scope; 
 Apply the skill's core policies and execution efficiency guidance. Assess approved requirement coverage, correctness and unjustified complexity.
 Return concrete findings, evidence, limitations and a verdict to the umbrella or the verification owner that commissioned a contract review.
 Leave implementation fixes and shared STATE.md updates to their owners.
+When commissioned by the umbrella, finish by writing the result file to the result_path you were given (references/orchestration.md, Result file) and return only that path.
 """
