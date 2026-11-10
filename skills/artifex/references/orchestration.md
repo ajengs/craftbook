@@ -27,7 +27,7 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
 
 1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id> [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
 2. **Carry out the actions in order:**
-   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> [--agent <harness id>]`; chain it with your next router call rather than spending a turn on it. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
+   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> --agent <harness id>`; chain it with your next router call rather than spending a turn on it. Pass `--agent` whenever the harness returns an id: it is how that run's cost is found later. In Claude Code it is the agent id the Agent tool returns, whose transcript is `~/.claude/projects/<project>/<umbrella session>/subagents/agent-<id>.jsonl`; in Codex it is the thread id. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
    - `spawn` with `unconfirmed`: the router printed this run before and never got `started`. If the agent is in fact running, record `started`; if it never started, spawn it now; if it can't be started, record `run-failed`. The router never assumes a printed spawn happened, so a lost spawn can't leave it waiting forever.
    - `wait`: nothing to do. The reason says what it is waiting on.
    - `idle`: nothing is queued. Wait for a poll result, a user trigger or sign-off.
@@ -40,7 +40,7 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
    - `event dependency-met --name <dependency as written in the handoff>`
    - `event trigger-p6` when the user asks for P6
    - `event close --note <sign-off>` after the user signs off
-7. **When the umbrella is resumed or replaced:** run `event umbrella --session <id>` first, on every open milestone. Each recorded session id, together with the timestamps in `run.jsonl`, lets the umbrella's tokens be sliced per transition later. `<id>` is the umbrella's own session or thread id: in Claude Code the transcript file name under `~/.claude/projects/`, in Codex the thread id. If it isn't known, leave it out and note that with `artifex_state.py decide`. Recording the same id twice in a row is a no-op.
+7. **When the umbrella is resumed or replaced:** run `event umbrella --session <id>` first, on every open milestone. Each recorded session id, together with the timestamps in `run.jsonl`, lets the umbrella's tokens be sliced per transition later. `<id>` is the umbrella's own session or thread id: in Claude Code the transcript file name under `~/.claude/projects/`, in Codex the thread id. If it isn't known, leave it out and note that with `artifex_state.py decide`. Recording the same id twice in a row is a no-op. `runs` lists every umbrella session and run with its window and agent id, which is what token slicing reads, and names any run recorded without an agent id.
 8. **When the user asks where things stand:** `status` covers one milestone; `artifex_state.py render` covers the initiative with every milestone's router status, and `render --out <initiative folder>/STATE.md` writes it as a file.
 
 `--dry-run` prints actions without recording dispatches. Use it for a look ahead.
@@ -56,6 +56,7 @@ Prefix: `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folde
 | `result <path> [--override "<reason>"]` | An agent returned its result file path |
 | `next [--dry-run]` | Nothing new happened and you want the actions again |
 | `status` | The user asks about one milestone |
+| `runs` | Measuring cost: every run with its agent id and time window, and each umbrella session with its window |
 | `event started --run-id <id> [--agent <harness id>]` | A printed spawn is confirmed running |
 | `event run-failed --run-id <id> [--reason "<why>"]` | A spawn failed, or an agent ended without a result file |
 | `event poll --kind ci --outcome passing\|failing\|pending\|none [--head <sha>]` | After a CI poll |

@@ -12,6 +12,7 @@ Commands (each takes --dir <milestone folder>):
     event     record a start, poll, failed run, resume, context, completion,
               dependency, P6 trigger or close
     next      print the next actions
+    runs      list runs and umbrella sessions with ids and time windows
     status    print the router's status block
 
 Every command except status prints JSON: {"checkpoints": [...], "actions": [...]}.
@@ -1149,6 +1150,33 @@ def cmd_next(args):
     return Session(args.dir).respond(dispatch=not args.dry_run)
 
 
+def run_report(events) -> dict:
+    """Every run and umbrella session with its time window, for slicing token costs by transcript."""
+    runs, umbrella = {}, []
+    for ev in events:
+        kind, ts = ev.get("type"), ev.get("ts")
+        if kind == "init" and ev.get("umbrella_session"):
+            umbrella.append({"session": ev["umbrella_session"], "from": ts})
+        elif kind == "umbrella":
+            umbrella.append({"session": ev["session"], "from": ts})
+        elif kind == "dispatched":
+            runs[ev["run_id"]] = {"phase": ev["phase"], "dispatched": ts, "started": None, "agent": None,
+                                  "ended": None, "outcome": None}
+        elif kind == "started" and ev.get("run_id") in runs:
+            runs[ev["run_id"]].update(started=ts, agent=ev.get("agent") or runs[ev["run_id"]]["agent"])
+        elif kind in ("result", "complete") and ev["result"]["run_id"] in runs:
+            run = runs[ev["result"]["run_id"]]
+            if ev.get("problems") and not ev.get("override"):
+                continue
+            run.update(ended=ts, outcome=ev["result"]["status"] + (" (by umbrella)" if kind == "complete" else ""))
+        elif kind == "run_failed" and ev.get("run_id") in runs:
+            runs[ev["run_id"]].update(ended=ts, outcome="failed")
+    for i, entry in enumerate(umbrella):
+        entry["to"] = umbrella[i + 1]["from"] if i + 1 < len(umbrella) else None
+    missing = sorted(rid for rid, r in runs.items() if not r["agent"])
+    return {"umbrella": umbrella, "runs": runs, "runs_without_agent_id": missing}
+
+
 def render_status(state: dict) -> str:
     review, p5, pr = state["review"], state["p5"], state["pr"]
     if state["closed"]:
@@ -1188,7 +1216,7 @@ def build_parser() -> argparse.ArgumentParser:
     def command(name, **kw):
         p = sub.add_parser(name, **kw)
         p.add_argument("--dir", type=Path, required=True, help="milestone folder")
-        if name != "status":
+        if name not in ("status", "runs"):
             p.add_argument("--dry-run", action="store_true", help="print actions without recording dispatch")
         return p
 
@@ -1255,6 +1283,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = command("status")
     p.set_defaults(func=lambda args: render_status(Session(args.dir).state))
+
+    p = command("runs", help="runs and umbrella sessions with their ids and time windows, for cost slicing")
+    p.set_defaults(func=lambda args: run_report(Session(args.dir).events))
     return parser
 
 

@@ -680,6 +680,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(p3["inputs"]["handoff_context"], {"branch": "feature", "workdir": str(self.repo.work)})
 
 
+    def test_runs_report_lists_agent_ids_and_windows(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "u1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        self.cli("event", "started", "--run-id", p3["run_id"], "--agent", "agent-abc")
+        self.cli("event", "umbrella", "--session", "u2")
+        report = self.cli("runs")
+        run = report["runs"][p3["run_id"]]
+        self.assertEqual((run["phase"], run["agent"], run["ended"]), ("P3", "agent-abc", None))
+        self.assertTrue(run["dispatched"] and run["started"])
+        self.assertEqual([u["session"] for u in report["umbrella"]], ["u1", "u2"])
+        self.assertEqual(report["umbrella"][0]["to"], report["umbrella"][1]["from"])
+        self.assertEqual(report["runs_without_agent_id"], [])
+
+
 class DispatchConfirmationTests(unittest.TestCase):
     def test_unconfirmed_spawn_is_printed_again_with_the_same_run_id(self):
         sim = Sim()

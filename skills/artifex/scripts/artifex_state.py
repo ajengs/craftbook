@@ -41,7 +41,7 @@ SECTIONS = {
     "consent": ("status", "response", "date", "source", "scope", "umbrella_route"),
 }
 TABLES = {
-    "sessions": ("role", "route", "model", "effort", "runtime", "status"),
+    "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "status"),
     "milestones": ("scope", "status", "session", "folder", "depends_on", "link"),
     "artifacts": ("path", "revision", "sha256", "decision", "date", "affects"),
     "blockers": ("text", "since", "owner"),

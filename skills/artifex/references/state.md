@@ -30,7 +30,7 @@ Run `python <skill>/scripts/artifex_state.py --dir <initiative folder> <command>
 | `status` | phase, status, next | A phase starts or ends, or a posted checkpoint changes the next step. Status is one of draft, pending approval, implementing, in review, verifying, ready for acceptance, blocked, closed |
 | `workspace` | workdir, workdir_kind, work_folder, project_folder, artifact_folder, source | Resolved at the start (`SKILL.md`, Workspace) |
 | `consent` | status, response, date, source, scope, umbrella_route | The user answers the consent question |
-| `sessions` row per session name | role, route, model, effort, runtime, status | A phase session is created or finishes. `runtime` says what the host confirmed, or `unconfirmed` |
+| `sessions` row per session name | role, session_id, route, model, effort, runtime, status | A phase session (P1, P2, D1) is created or finishes. `session_id` is the host's own id for it (the `local_…` id or transcript name in Claude Code, the thread id in Codex), recorded at creation so its whole transcript can be costed later; P3–P6 agents are recorded by the router instead (`event started --agent`). `runtime` says what the host confirmed, or `unconfirmed` |
 | `milestones` row per id | scope, status, session, folder, depends_on, link | P1 selects it, P2 starts, or it closes. `link` ties a D1 folder to its milestone and finding |
 | `artifacts` row per name | path, revision, sha256, decision, date, affects | An approval is recorded, or an approved artifact changes |
 | `blockers` row per id | text, since, owner | A blocker appears; `remove` it when resolved |
