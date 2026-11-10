@@ -8,6 +8,7 @@
 - On status page skill, ensure that timestamp also shows GMT+7. Also how many ticks on fast mode before it goes back to hourly. (still need to calibrate token efficiency on status page)
 - Need to decide  which session is responsible for checking and addressing PR feedback. In current working model, P3 will poll and address them. But it might cause bloated context. Though a fresh subagent without proper context would be costly too since he would try to build the context probably from scratch. P2 is a candidate. Or an entirely separate session. 
 - It might be a good idea to ensure that we have a little bit more state recorded so feedback handler do not start from scratch, knows the design background, but preferably independent of P3 and P4. 
+- Orchestration script.
 
 ## Workflow
 - When P5 or P6 fails, send report to umbrella. It should create a new session D1-debugging with references to verification report and findings.
@@ -21,6 +22,7 @@
 - On code change caused by additional/manual review round, only trigger iterative P4 once, and scoped P5 once without full code review.
 - Over time, we can have verification scenarios repository so agent can detect which module changes need what scenarios.
 - Review P4 flow.
+- Add flag on skill invocation: project, project milestone, debugging/investigation, scoped change implementation, review and verification/benchmark. 
 
 ## Policy
 - Ensure no worktree creation unless requested.
@@ -28,3 +30,21 @@
 - Need to ensure we agree on the skills to be used during the execution, especially auto verification and benchmark. Also if possible, reviewer, feedback handler. First, it is to ensure choose the most appropriate tools. Also to reduce the cost of tools exploration by agents. We could also have a local .tools file that Artifex can refer.
 - For P2, needs an agent that knows how to write specs in GWT formats. Probably can use "42D1VO milestone 1 specs: Redis queue overflow to SQL" older version vs latest as examples.
 
+## Toolings and evidence collection
+- (generic) Request timing -> HAR files
+- (cortex) duration breakdown, stacktrace -> debug recording
+- memory usage -> dump file, dotMemory
+- performance profiling -> dotTrace
+- Redis, SQL snapshots
+- Screenshots on core interactions
+- Screenshots of Grafana dashboards or links to query view
+- dottrace-timeline-analysis
+- heap-dump-retained-size
+- ephemeral-dump-capture
+- ephemeral-dottrace-capture
+- kubectl-port-forward
+- dam-debug-recording, dam-dottrace-recording
+- link-meeting-test, cortex-api-call, dam-*
+
+## Documentation & walkthrough
+- Which Claude session can I use?
