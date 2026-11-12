@@ -177,12 +177,20 @@ For an already-running umbrella or a top-level session without native selection 
 
 ## Documents
 
-Documents the user reads or approves are **human-targeted**: kickoff, analysis, specs, verification contract, verification report, and the diagnosis when it needs approval. By default:
+Documents the user reads or approves are **human-targeted**: kickoff, analysis, specs, verification contract, verification report, and the diagnosis when it needs approval. The user reviews each by commenting on specific passages before approving a revision. Which surface makes that possible depends on the host, so pick it from this table, not from whether a viewer or an artifact tool merely exists:
 
-1. **Native document artifacts available:** draft each as a **document artifact**, a commentable document in the environment's document or artifact system, so the user can review it with comments before approving. Keep every review round in the same artifact. Generate or update the corresponding markdown file (`kickoff.md`, `analysis.md`, `specs.md`, ...) in the resolved initiative artifact folder only after the user approves that artifact revision. The artifact is the source of truth and the markdown file is its derived copy.
-2. **No native document artifacts:** create the markdown file directly in the resolved initiative artifact folder and immediately open it in the environment's artifact viewer or commentable document preview. The file is the source of truth. This step is complete only when the environment confirms that the file is open in a viewer that lets the user highlight a passage or select a visual element and send the annotation to the agent. A queued, unconfirmed or plain-editor open does not satisfy the gate; report that actual state instead of claiming the viewer is open. Keep every review round in the same file and preview.
-3. In either branch, apply each comment or annotation to that specific area while preserving the rest of the document. Ask for explicit approval of the current revision. For a native artifact, record its provider artifact reference and provider revision ID in `state.json`; also record the SHA-256 content hash of its approved markdown copy. For a markdown-first document, record its path and SHA-256 content hash. Compute hashes from the exact approved file bytes.
-4. If neither native artifacts nor an annotation-capable viewer are available, say so, draft the markdown file, open it in the best available editor or preview, and use passage-specific comments in chat.
+| Host | Review surface | Source of truth |
+|---|---|---|
+| Codex desktop | The markdown file, opened in Codex's file viewer, where the user annotates passages and the annotations reach the agent. Don't create a Pages document for it | The markdown file |
+| Claude Code (desktop, CLI or web) | A Claude Docs document, made through the docs tools (load the `docs` skill first) or, without them, the Artifact tool's `document` intent. The file pane can open a local file but the user can't comment on it, and it opens nothing outside the session's folders, so never stop at "couldn't open it in the viewer" | The document; the markdown file is its derived copy |
+| Anything else | The local file when the host's viewer lets the user annotate a passage and send it to the agent; otherwise a native commentable document; otherwise chat | Whichever was used |
+
+A local file wins wherever its viewer can annotate: there's no provider revision to track and no derived copy to keep in sync.
+
+1. **Markdown-first.** Create the file in the resolved initiative artifact folder and open it in the annotating viewer right away. Done only once the environment confirms the file is open there; a queued, unconfirmed or plain-editor open doesn't count, so report the actual state instead. Keep every review round in the same file.
+2. **Document-first.** Draft the document, keep every review round in it, and write the markdown file (`kickoff.md`, `analysis.md`, `specs.md`, ...) into the artifact folder only after the user approves that revision.
+3. In either case, apply each comment to its passage and keep the rest of the document as it is. Ask for explicit approval of the current revision. Record in `state.json` (`artifacts` table): for markdown-first, the path and SHA-256 of the approved bytes; for document-first, the document link, the provider's revision id when the tool reports one, and the SHA-256 of the approved markdown copy.
+4. If the chosen surface fails (the docs tools are missing, the viewer won't open), say what failed, use the next row that works, and only as a last resort draft the markdown file and take passage-specific comments in chat. Record which surface was used.
 
 Agent-facing documents (`review.md`, handoffs, execution summaries, runbooks) are written directly as markdown; agent state is `state.json` and `run.jsonl`, never markdown. The user can override the default for any document.
 
