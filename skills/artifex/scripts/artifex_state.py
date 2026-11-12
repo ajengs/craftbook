@@ -781,7 +781,9 @@ def render(folder: Path, state: dict) -> str:
         out += [f"### Router — {name}", "```text", status, "```", ""]
     if state["blockers"]:
         out += ["## Blockers", *_table(state["blockers"], TABLES["blockers"]), ""]
-    out += ["## Approved artifacts", *_table(state["artifacts"], TABLES["artifacts"]), ""]
+    artifact_columns = tuple(c for c in TABLES["artifacts"]
+                             if c != "source" or any(r.get("source") for r in state["artifacts"].values()))
+    out += ["## Approved artifacts", *_table(state["artifacts"], artifact_columns), ""]
     out += ["## Decisions"]
     out += [f"- {d['date']}: {d['text']}" + (f" ({', '.join(d['artifacts'])})" if d.get("artifacts") else "")
             for d in state["decisions"]] or ["None."]

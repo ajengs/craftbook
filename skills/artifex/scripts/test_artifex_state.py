@@ -93,6 +93,14 @@ class StateCliTests(unittest.TestCase):
         out = self.cli("render", "--out", str(self.dir / "STATE.md"))
         self.assertTrue(Path(out["written"]).exists())
 
+    def test_render_artifact_table_shows_source_column_only_when_recorded(self):
+        self.cli("upsert", "artifacts", "kickoff", "path=kickoff.md", "decision=pending")
+        self.assertNotIn("| Source |", self.cli("render"))
+        self.cli("upsert", "artifacts", "specs-M1", "path=specs.md", "source=the invocation")
+        text = self.cli("render")
+        self.assertIn("| Source |", text)
+        self.assertIn("the invocation", text)
+
 
 class HostTests(unittest.TestCase):
     def test_claude_code_reports_its_transcript_and_app_ids(self):
@@ -561,6 +569,25 @@ class ModeTests(unittest.TestCase):
             self.assertEqual(st.main(["--dir", str(self.dir), "brief", "P2", "--milestone", "M1", "--short"]), 0,
                              err.getvalue())
         self.assertIn("Short P2", out.getvalue())
+
+
+class TrackFlagRemovedTests(unittest.TestCase):
+    def refused(self, main, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                main(argv)
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--track", err.getvalue())
+
+    def test_state_init_no_longer_accepts_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.refused(st.main, ["--dir", tmp, "init", "--mode", "project", "--mode-source", "explicit",
+                                   "--request", "/artifex project ART-1 x", "--track", "bug"])
+
+    def test_router_init_no_longer_accepts_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.refused(af.main, ["init", "--dir", tmp, "--milestone", "M1", "--ticket", "T-1", "--track", "bug"])
 
 
 if __name__ == "__main__":
