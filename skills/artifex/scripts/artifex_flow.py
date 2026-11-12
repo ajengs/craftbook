@@ -272,7 +272,10 @@ def on_dispatched(state, ev):
     }
     ver = state["handoffs"].get("verification")
     if phase in ("P5", "P6") and ver is not None:
-        state["active"][ev["run_id"]]["verification_sha"] = ver["sha256"]
+        state["active"][ev["run_id"]].update(
+            verification_sha=ver["sha256"],
+            # The run answers the scenarios it was given, even if the handoff changes while it runs.
+            scenarios=list(ver["fields"].get("auto" if phase == "P5" else "manual", [])))
     state["seq"][phase] = state["seq"].get(phase, 0) + 1
     state["handled_threads"].extend(t for t in req["threads"] if t not in state["handled_threads"])
     if phase == "P4":
@@ -688,7 +691,8 @@ def spawn_action(state: dict, phase: str, run_id: str | None = None, run: dict |
         if review["mode"] != "initial":
             extra.append(review["mode"].replace("_", " "))
     if phase in ("P5", "P6"):
-        inputs["scenarios"] = ver["fields"].get("auto" if phase == "P5" else "manual", [])
+        inputs["scenarios"] = (run.get("scenarios") if run is not None and "scenarios" in run
+                               else ver["fields"].get("auto" if phase == "P5" else "manual", []))
         action["evidence_dir"] = f"evidence/{run_id}"
     if run is not None:
         action["unconfirmed"] = (f"printed at {run.get('dispatched_at') or 'an earlier call'} with no "
@@ -963,16 +967,19 @@ def check_shape(state: dict, run: dict, env: dict, mdir: Path) -> list:
         if not isinstance(findings, int) or findings < 1:
             problems.append("changes_requested requires findings >= 1")
     if phase in ("P5", "P6") and worked:
-        problems.extend(_check_scenarios(state, phase, status, env))
+        problems.extend(_check_scenarios(state, run, status, env))
     pushed = env.get("pushed_head")
     if pushed is not None and not (phase in ("P5", "P6") and isinstance(pushed, str) and SHA_RE.match(pushed)):
         problems.append("pushed_head is only for P5 or P6 test commits, as a full SHA")
     return problems
 
 
-def _check_scenarios(state, phase, status, env) -> list:
+def _check_scenarios(state, run, status, env) -> list:
     problems = []
-    expected = state["handoffs"]["verification"]["fields"].get("auto" if phase == "P5" else "manual", [])
+    phase = run["phase"]
+    expected = run.get("scenarios")
+    if expected is None:
+        expected = state["handoffs"]["verification"]["fields"].get("auto" if phase == "P5" else "manual", [])
     scenarios = env.get("scenarios")
     if not isinstance(scenarios, dict):
         return ["scenarios must map each scenario id to pass, fail, inconclusive or invalid"]

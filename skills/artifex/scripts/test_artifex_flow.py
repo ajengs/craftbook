@@ -894,6 +894,35 @@ class CliTests(unittest.TestCase):
             self.assertTrue(any(expected in p for p in problems), (name, problems))
             self.assertEqual(out["actions"][0]["action"], "halted", name)
 
+    def replace_verification(self, auto):
+        handoff = self.mdir / "verification-handoff.md"
+        handoff.write_text(f"---\nauto: {auto}\nmanual: []\n---\n# Verify\n", encoding="utf-8")
+        self.cli("handoff", "--kind", "verification", str(handoff))
+        (self.mdir / "p5.md").write_text("pass\n", encoding="utf-8")
+
+    def old_p5_pass_is_rerouted(self, auto, expected):
+        run_id, head = self.to_p5()
+        self.replace_verification(auto)
+        out = self.cli("result", self.result_file(run_id, phase="P5", status="completed", head=head,
+                                               scenarios={"V1": "pass"}, artifacts=["p5.md"]))
+        self.assertEqual([c["kind"] for c in out["checkpoints"]], ["p5_obsolete"])
+        rerun = out["actions"][0]
+        self.assertEqual((rerun["action"], rerun["phase"], rerun["inputs"]["scenarios"]), ("spawn", "P5", expected))
+
+    def test_scenario_added_while_p5_runs_reroutes_the_old_result(self):
+        self.old_p5_pass_is_rerouted("[V1, V2]", ["V1", "V2"])
+
+    def test_scenario_renamed_while_p5_runs_reroutes_the_old_result(self):
+        self.old_p5_pass_is_rerouted("[V1b]", ["V1b"])
+
+    def test_old_run_still_answers_its_own_scenarios(self):
+        run_id, head = self.to_p5()
+        self.replace_verification("[V1, V2]")
+        out = self.cli("result", self.result_file(run_id, phase="P5", status="completed", head=head,
+                                               scenarios={}, artifacts=["p5.md"]))
+        problems = out["checkpoints"][0]["problems"]
+        self.assertIn("no result for scenario(s): V1", problems)
+
     def test_blocked_p5_with_a_push_but_no_head_is_rejected_not_crashed(self):
         run_id, head = self.to_p5()
         pushed = self.repo.commit("test_feature.py", "assert True\n", "test")
