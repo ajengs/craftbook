@@ -115,5 +115,13 @@ class CostTests(unittest.TestCase):
         self.assertEqual(rep["unresolved"], ["umbrella gone: not found"])
 
 
+class MatchChildTests(unittest.TestCase):
+    def test_unnamed_child_is_matched_from_dispatch_time(self):
+        run = {"session_name": "T-1 P3 implementation M1", "dispatched": "2026-01-01T10:01:00+00:00",
+               "started": "2026-01-01T10:01:30+00:00", "ended": None}
+        child = (Path("agent-1.jsonl"), "worker", ac.ts("2026-01-01T10:01:10+00:00"))
+        self.assertEqual(ac.match_child(run, [child], set()), (child[0], "time window"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -47,7 +47,7 @@ Sub agents create the branch, commit, push and open the PR. A user rule such as 
 
 > Do you authorize the implementation and verification sub agents of this initiative to create its branch, commit, push to it and open the pull request? Merging, deploying and backporting stay with you.
 
-Record the reply with `artifex_state.py delivery --status <authorized|declined> --question-file <q> --response-file <r>`. If the user's Artifex invocation already grants it, use `delivery --status authorized --from-request` instead of asking. The router holds every implementation start until a delivery record exists and passes the user's words to each sub agent as `delivery_authorization`, so neither the umbrella nor the agent asks again for what it covers. Ask again only for something outside it, such as a merge, or after the user withdraws it. A decline means the user pushes and opens the PR; the umbrella then records it with `event complete`.
+Record the reply with `artifex_state.py delivery --status <authorized|declined> --question-file <q> --response-file <r>`. If the user's Artifex invocation already grants it, use `delivery --status authorized --from-request` instead of asking. The router holds every implementation start until a delivery record exists and passes the user's words to each sub agent as `delivery_authorization`, so neither the umbrella nor the agent asks again for what it covers. Ask again only for something outside it, such as a merge, or after the user withdraws it. A decline means the user pushes and opens the PR; the umbrella then records it with `event complete --head <sha> --pr-url <url> --note <n>`, without `--run-id`, which completes the queued implementation.
 
 ## Six phases
 

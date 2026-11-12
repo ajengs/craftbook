@@ -65,6 +65,7 @@ Prefix: `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folde
 | `event poll --kind threads [--ids <thread>:<comment> ...]` | After a PR-thread poll, with every unresolved thread |
 | `event context [--branch <b>] [--workdir <path>] [--target <b>] [--note "<source>"]` | The user settles a `TBD` in the implementation handoff |
 | `event complete --run-id <id> --head <sha> [--pr-url <url>] --note "<what the user did>" [--override "<reason>"]` | A halted P3 run needs no more agent work after the user's answer |
+| `event complete --head <sha> --pr-url <url> --note "<what the user did>"` (no `--run-id`) | Delivery is declined and the user did the queued implementation by hand |
 | `event resume --note "<decision>" [--request P3\|P4\|P5\|P6] [--origin p4\|p5\|ci\|threads\|resume] [--input "<text>" ...] [--grant review\|p5_rework]` | Any other halt, once handled |
 | `event dependency-met --name <dependency>` | A `depends_on` item landed |
 | `event trigger-p6` | The user asks for P6 |
@@ -199,6 +200,8 @@ Concurrency rules:
 `resume` clears every halt reason at once, and it refuses while a rejected run is still open.
 
 **Finishing a halted P3 run without an agent.** Starting a sub agent only to write down what the user just did costs a spawn and several umbrella turns. `event complete --run-id <the halted run> --head <sha> --pr-url <url> --note "<what the user did>"` records the run as completed by the umbrella instead. It applies only to a P3 run halted as `blocked` or `needs_decision`. The router runs the same checks as for an agent's result (`origin/<branch>` at that head, no internal codes, new commits for a rework) and refuses on a problem unless `--override` gives the user's reason. Then it routes exactly as a completed P3 result would: the first PR starts review round 1, a rework starts its round. If any code change is still needed, this isn't the tool: resume and let an agent do it.
+
+Without `--run-id`, `event complete` finishes the queued P3 instead, the one a declined delivery authorization holds back: the user pushes the branch and opens the PR, and the umbrella records it with the same checks.
 
 ## Limits
 

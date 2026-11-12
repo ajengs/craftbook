@@ -32,9 +32,9 @@ class Sim:
         if verification:
             self.verification(auto, manual)
 
-    def verification(self, auto=("V1",), manual=()):
+    def verification(self, auto=("V1",), manual=(), sha256="v" * 64):
         self.apply({"type": "handoff", "kind": "verification", "path": "verification-handoff.md",
-                    "sha256": "v" * 64, "fields": {"auto": list(auto), "manual": list(manual)}})
+                    "sha256": sha256, "fields": {"auto": list(auto), "manual": list(manual)}})
 
     def apply(self, ev):
         cps = af.apply(self.state, ev)
@@ -349,6 +349,34 @@ class VerificationLoopTests(unittest.TestCase):
         self.assertEqual(sim.state["pr"]["head"], sha(9))
         self.assertEqual(sim.step()[0]["action"], "idle")
 
+    def test_changed_verification_handoff_reruns_p5_with_the_new_scenarios(self):
+        sim = Sim()
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        sim.result(p5["run_id"], head=sha(1), scenarios={"V1": "pass"})
+        sim.verification(auto=("V1", "V2"), sha256="w" * 64)
+        self.assertIn("verification_reset", sim.kinds())
+        rerun, = sim.spawned()
+        self.assertEqual((rerun["phase"], rerun["inputs"]["scenarios"]), ("P5", ["V1", "V2"]))
+
+    def test_changed_verification_handoff_clears_a_p6_pass(self):
+        sim = Sim(auto=(), manual=("M1",))
+        sim.to_review_pass()
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        sim.result(p6["run_id"], head=sha(1), scenarios={"M1": "pass"})
+        sim.verification(auto=(), manual=("M1", "M2"), sha256="w" * 64)
+        self.assertIsNone(sim.state["p6"]["passed_head"])
+        self.assertIn("P6 trigger", sim.step()[0]["reason"])
+
+    def test_rerecording_the_same_verification_handoff_keeps_passes(self):
+        sim = Sim()
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        sim.result(p5["run_id"], head=sha(1), scenarios={"V1": "pass"})
+        sim.verification()
+        self.assertEqual(sim.step()[0]["action"], "idle")
+
     def test_p3_waits_while_p5_is_active(self):
         sim = Sim()
         sim.to_review_pass()
@@ -419,6 +447,30 @@ class ExceptionTests(unittest.TestCase):
         sim = Sim()
         wait, = sim.step(siblings=[("M0", other.state)])
         self.assertIn("milestone M0", wait["reason"])
+
+    def test_sibling_verification_holds_implementation_on_the_same_checkout(self):
+        other = Sim()
+        other.to_review_pass()
+        other.spawned()
+        sim = Sim()
+        wait, = sim.step(siblings=[("M0", other.state)])
+        self.assertIn("milestone M0 has a P5 verification", wait["reason"])
+
+    def test_sibling_implementation_holds_verification_on_the_same_checkout(self):
+        sim = Sim()
+        sim.to_review_pass()
+        other = Sim()
+        other.spawned()
+        wait, = sim.step(siblings=[("M0", other.state)])
+        self.assertEqual((wait["phase"], wait["action"]), ("P5", "wait"))
+        self.assertIn("milestone M0 has an implementation", wait["reason"])
+
+    def test_sibling_on_another_branch_and_checkout_does_not_hold(self):
+        other = Sim()
+        other.state["handoffs"]["implementation"]["fields"].update(branch="b2", workdir="w2")
+        other.spawned()
+        sim = Sim()
+        self.assertEqual(sim.step(siblings=[("M0", other.state)])[0]["action"], "spawn")
 
     def test_changed_handoff_blocks_dispatch(self):
         sim = Sim()
@@ -735,6 +787,80 @@ class CliTests(unittest.TestCase):
                                               pr_url="https://example/pr/1"))["actions"][0]
         self.assertNotIn("delivery_authorization", p4["inputs"])
 
+    def declined_delivery(self):
+        import artifex_state as st
+        initiative = self.mdir.parent.parent
+        with contextlib.redirect_stdout(io.StringIO()):
+            st.main(["--dir", str(initiative), "init", "--ticket", "T-1"])
+            st.main(["--dir", str(initiative), "delivery", "--status", "declined",
+                     "--question", "May sub agents branch, commit, push and open the PR?", "--response", "No"])
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        return self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
+
+    def test_declined_delivery_is_completed_by_hand_and_review_starts(self):
+        wait = self.declined_delivery()["actions"][0]
+        self.assertEqual(wait["action"], "wait")
+        self.assertIn("no --run-id", wait["reason"])
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        git(self.repo.work, "push", "-q", "origin", "feature")
+        out = self.cli("event", "complete", "--head", head, "--pr-url", "https://example/pr/1",
+                       "--note", "user pushed and opened the PR")
+        self.assertIn("pr_opened", [c["kind"] for c in out["checkpoints"]])
+        self.assertEqual((out["actions"][0]["action"], out["actions"][0]["phase"]), ("spawn", "P4"))
+        self.assertEqual(out["actions"][0]["run_id"], "M1-P4-1")
+        self.cli("event", "complete", "--head", head, "--note", "again", expect=2)
+
+    def test_declined_delivery_completion_refuses_an_unpushed_head(self):
+        self.declined_delivery()
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        self.cli("event", "complete", "--head", head, "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
+
+    def to_p5(self):
+        """Implementation, a passing review and a P5 spawn on the pushed feature head."""
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        git(self.repo.work, "push", "-q", "origin", "feature")
+        p4 = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
+                                              pr_url="https://example/pr/1"))["actions"][0]
+        (self.mdir / "review.md").write_text("ok\n", encoding="utf-8")
+        self.cli("result", self.result_file(p4["run_id"], phase="P4", status="completed", head=head,
+                                         artifacts=["review.md"]))
+        handoff = self.mdir / "verification-handoff.md"
+        handoff.write_text("---\nauto: [V1]\nmanual: []\n---\n# Verify\n", encoding="utf-8")
+        p5 = self.cli("handoff", "--kind", "verification", str(handoff))["actions"][0]
+        self.assertEqual(p5["phase"], "P5")
+        return p5["run_id"], head
+
+    def failing_p5(self, run_id, head, pushed):
+        (self.mdir / "p5.md").write_text("fail\n", encoding="utf-8")
+        return self.cli("result", self.result_file(run_id, phase="P5", status="changes_requested", head=head,
+                                                 pushed_head=pushed, scenarios={"V1": "fail"}, route="P3",
+                                                 artifacts=["p5.md"]))
+
+    def test_failing_p5_push_is_git_checked(self):
+        cases = []
+        run_id, head = self.to_p5()
+        unpushed = self.repo.commit("test_feature.py", "assert False\n", "failing test")
+        cases.append(("unpushed", unpushed, "not the reported"))
+        git(self.repo.work, "checkout", "-q", "-b", "other", "main")
+        stray = self.repo.commit("other.py", "y = 1\n", "unrelated")
+        git(self.repo.work, "push", "-q", "-f", "origin", "other:feature")
+        cases.append(("non-descendant", stray, "does not descend"))
+        for name, pushed, expected in cases:
+            out = self.failing_p5(run_id, head, pushed)
+            problems = out["checkpoints"][0].get("problems", [])
+            self.assertTrue(any(expected in p for p in problems), (name, problems))
+            self.assertEqual(out["actions"][0]["action"], "halted", name)
+
+    def test_failing_p5_push_with_internal_codes_is_rejected(self):
+        run_id, head = self.to_p5()
+        pushed = self.repo.commit("test_feature.py", "assert False\n", "test for SPEC-3")
+        git(self.repo.work, "push", "-q", "origin", "feature")
+        problems = self.failing_p5(run_id, head, pushed)["checkpoints"][0]["problems"]
+        self.assertTrue(any("SPEC-3" in p for p in problems), problems)
+
     def test_runs_report_lists_agent_ids_and_windows(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "u1")
         p3 = self.cli("handoff", "--kind", "implementation",
@@ -813,7 +939,8 @@ class UmbrellaCompleteTests(unittest.TestCase):
     def complete(self, sim, run_id, head, **extra):
         env = {"run_id": run_id, "phase": "P3", "status": "completed", "head": head,
                "pr_url": "https://example/pr/1"}
-        return sim.apply({"type": "complete", "result": env, "problems": [], "push": {"class": "initial"}, **extra})
+        return sim.apply({"type": "complete", "result": env, "problems": [], "push": {"class": "initial"},
+                          **extra})
 
     def test_blocked_p3_completed_by_umbrella_starts_review(self):
         sim = Sim()
@@ -842,6 +969,23 @@ class UmbrellaCompleteTests(unittest.TestCase):
         sim.result(p4["run_id"], status="blocked")
         with self.assertRaises(af.FlowError):
             self.complete(sim, p4["run_id"], sha(1))
+
+    def test_queued_implementation_done_by_the_user_starts_review(self):
+        sim = Sim()
+        self.complete(sim, "M1-P3-1", sha(1), queued=True)
+        self.assertIn("pr_opened", sim.kinds())
+        self.assertNotIn("P3", sim.state["requests"])
+        p4, = sim.spawned()
+        self.assertEqual(p4["phase"], "P4")
+        sim.result(p4["run_id"], "changes_requested", head=sha(1))
+        self.complete(sim, "M1-P3-2", sha(2), queued=True, push={"class": "code"})
+        self.assertEqual(sim.spawned()[0]["round"], 2)
+
+    def test_queued_completion_needs_a_queued_p3_and_no_running_one(self):
+        sim = Sim()
+        sim.spawned()
+        with self.assertRaises(af.FlowError):
+            self.complete(sim, "M1-P3-2", sha(1), queued=True)
 
     def test_problems_refuse_unless_overridden(self):
         sim = Sim()

@@ -183,7 +183,8 @@ def match_child(run: dict, children: list, taken: set):
         named = [c for c in free if c[1] == run["session_name"]]
         if len(named) == 1:
             return named[0][0], "session name"
-    start = ts(run["started"] or run["dispatched"])
+    # The child is spawned before `event started` is recorded, so its transcript can begin first.
+    start = ts(run.get("dispatched") or run["started"])
     end = ts(run["ended"]) if run.get("ended") else start + timedelta(days=1)
     timed = [c for c in free if c[2] and start <= c[2] <= end]
     if len(timed) == 1:

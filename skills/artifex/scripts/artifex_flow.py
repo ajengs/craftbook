@@ -238,6 +238,15 @@ def on_handoff(state, ev):
         left = open_fields(state)
         out.append(checkpoint("handoff_open", f"The implementation handoff leaves {', '.join(left)} open; "
                               "ask the user, then record `event context`", open=left))
+    if kind == "verification" and previous is not None and previous["sha256"] != ev["sha256"]:
+        # The passes ran against the old contract: new or changed scenarios must run before acceptance.
+        reset = [p for p in ("p5", "p6") if state[p]["passed_head"]]
+        for p in reset:
+            state[p]["passed_head"] = None
+        if reset:
+            out.append(checkpoint("verification_reset",
+                                  f"The verification handoff changed; {' and '.join(p.upper() for p in reset)} "
+                                  "must pass again", post=False))
     if kind == "verification":
         out.extend(after_review(state, from_pass=False))
     return out
@@ -301,17 +310,27 @@ def on_context(state, ev):
 
 
 def on_complete(state, ev):
-    """The umbrella finishes a halted P3 run itself: the user's answer left no agent work."""
+    """The umbrella finishes P3 itself: a halted run whose answer left no agent work, or queued
+    implementation the user did by hand (delivery declined)."""
     env = ev["result"]
-    held = next((h for h in state["halt"] if h.get("run_id") == env["run_id"]
-                 and h["kind"] in ("blocked", "needs_decision") and h.get("phase") == "P3"), None)
-    if held is None:
-        raise FlowError(f"{env['run_id']} is not a blocked or needs_decision implementation run")
     problems = ev.get("problems") or []
-    if problems and not ev.get("override"):
-        raise FlowError("cannot complete: " + "; ".join(problems))
-    state["halt"] = [h for h in state["halt"] if h is not held]
-    run = {"phase": "P3", "origins": held.get("origins", []), "inputs": [], "threads": []}
+    if ev.get("queued"):
+        if "P3" not in state["requests"] or any(r["phase"] == "P3" for r in state["active"].values()):
+            raise FlowError("no queued implementation to complete; give --run-id for a halted run")
+        if problems and not ev.get("override"):
+            raise FlowError("cannot complete: " + "; ".join(problems))
+        req = state["requests"].pop("P3")
+        state["seq"]["P3"] = state["seq"].get("P3", 0) + 1
+        run = {"phase": "P3", "origins": req["origins"], "inputs": req["inputs"], "threads": req["threads"]}
+    else:
+        held = next((h for h in state["halt"] if h.get("run_id") == env["run_id"]
+                     and h["kind"] in ("blocked", "needs_decision") and h.get("phase") == "P3"), None)
+        if held is None:
+            raise FlowError(f"{env['run_id']} is not a blocked or needs_decision implementation run")
+        if problems and not ev.get("override"):
+            raise FlowError("cannot complete: " + "; ".join(problems))
+        state["halt"] = [h for h in state["halt"] if h is not held]
+        run = {"phase": "P3", "origins": held.get("origins", []), "inputs": [], "threads": []}
     out = [checkpoint("completed_by_umbrella", ev.get("note") or f"{env['run_id']} completed by the umbrella",
                       post=False)]
     if problems:
@@ -683,25 +702,33 @@ def _p3_blocker(state, siblings, active_phases):
     missing = [d for d in fields.get("depends_on", []) if d not in state["deps_met"]]
     if missing:
         return f"waiting on dependencies: {', '.join(missing)}"
+    return _sibling_writer(state, siblings)
+
+
+WRITERS = {"P3": "an implementation", "P5": "a P5 verification", "P6": "a P6 verification"}
+
+
+def _sibling_writer(state, siblings):
+    """A sibling milestone with a sub agent that commits on the same branch or in the same checkout."""
+    fields = impl_fields(state)
     for name, other in siblings:
         other_fields = impl_fields(other)
-        if not other_fields:
-            continue
-        busy = any(r["phase"] == "P3" for r in other["active"].values())
-        same = (other_fields.get("branch") == fields.get("branch")
-                or other_fields.get("workdir") == fields.get("workdir"))
-        if busy and same:
-            return f"milestone {name} has an implementation sub agent on the same branch or working directory"
+        shared = [k for k in ("branch", "workdir")
+                  if not is_placeholder(fields.get(k)) and other_fields.get(k) == fields.get(k)]
+        writing = sorted({r["phase"] for r in other["active"].values()} & set(WRITERS))
+        if shared and writing:
+            return (f"milestone {name} has {WRITERS[writing[0]]} sub agent on the same branch or "
+                    "working directory")
     return None
 
 
-def _verification_blocker(state, active_phases):
+def _verification_blocker(state, active_phases, siblings=()):
     queued = set(state["requests"])
     if "P3" in active_phases or "P3" in queued:
         return "waits for the implementation sub agent"
     if "P4" in active_phases or "P4" in queued:
         return "waits for the review round"
-    return None
+    return _sibling_writer(state, siblings)
 
 
 def _delivery_blocker(delivery) -> str | None:
@@ -711,8 +738,8 @@ def _delivery_blocker(delivery) -> str | None:
     if not delivery.get("status"):
         return ("no delivery authorization recorded; ask the user once whether sub agents may branch, commit, "
                 "push and open the PR, and record the reply with `artifex_state.py delivery`")
-    return (f"delivery is {delivery['status']}: implementation can't push or open the PR; the user does that, "
-            "then record it with `event complete`")
+    return (f"delivery is {delivery['status']}: no sub agent pushes or opens the PR. The user does the work, "
+            "then record it with `event complete --head <sha> --pr-url <url> --note <n>` (no --run-id)")
 
 
 def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
@@ -740,7 +767,7 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
     settled = review_settled(state) and "P4" not in state["requests"]
     auto = bool(ver and ver["fields"].get("auto"))
     if settled and auto and not is_current(state, state["p5"]["passed_head"]) and "P5" not in active_phases:
-        reason = _verification_blocker(state, active_phases) \
+        reason = _verification_blocker(state, active_phases, siblings) \
             or _changed(state, ["implementation", "verification"], hash_of)
         actions.append(_wait("P5", reason) if reason else spawn_action(state, "P5"))
 
@@ -750,7 +777,7 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
             reason = "P6 waits for a passing review on the current head"
         elif auto and not is_current(state, state["p5"]["passed_head"]):
             reason = "P6 waits for P5 to pass on the current head"
-        reason = reason or _verification_blocker(state, active_phases) \
+        reason = reason or _verification_blocker(state, active_phases, siblings) \
             or _changed(state, ["implementation", "verification"], hash_of)
         actions.append(_wait("P6", reason) if reason else spawn_action(state, "P6"))
 
@@ -1150,7 +1177,7 @@ def cmd_result(args):
         raise FlowError(f"{env['run_id']} is not an active run")
     problems = check_shape(session.state, run, env, args.dir)
     push = None
-    if not problems and env["status"] == "completed":
+    if not problems and (env["status"] == "completed" or env.get("pushed_head")):
         git_problems, push = check_git(session.state, run, env)
         problems += git_problems
     session.record({"type": "result", "result": env, "problems": problems, "override": args.override,
@@ -1197,12 +1224,19 @@ def cmd_event(args):
 
 def complete_event(session, args) -> dict:
     state = session.state
-    held = next((h for h in state["halt"] if h.get("run_id") == args.run_id and h.get("phase") == "P3"), None)
-    if held is None:
-        raise FlowError(f"{args.run_id} is not a halted implementation run")
-    env = {"run_id": args.run_id, "phase": "P3", "status": "completed", "head": args.head,
+    if args.run_id:
+        held = next((h for h in state["halt"] if h.get("run_id") == args.run_id and h.get("phase") == "P3"), None)
+        if held is None:
+            raise FlowError(f"{args.run_id} is not a halted implementation run")
+        run_id, origins = args.run_id, held.get("origins", [])
+    else:
+        req = state["requests"].get("P3")
+        if req is None or any(r["phase"] == "P3" for r in state["active"].values()):
+            raise FlowError("no queued implementation to complete; give --run-id for a halted run")
+        run_id, origins = f"{state['milestone']}-P3-{state['seq'].get('P3', 0) + 1}", req["origins"]
+    env = {"run_id": run_id, "phase": "P3", "status": "completed", "head": args.head,
            "pr_url": args.pr_url or state["pr"]["url"]}
-    run = {"phase": "P3", "origins": held.get("origins", []), "inputs": [], "threads": []}
+    run = {"phase": "P3", "origins": origins, "inputs": [], "threads": []}
     problems = []
     if not SHA_RE.match(args.head or ""):
         problems.append("head must be the full commit SHA")
@@ -1213,7 +1247,7 @@ def complete_event(session, args) -> dict:
         git_problems, push = check_git(state, run, env)
         problems += git_problems
     return {"type": "complete", "result": env, "problems": problems, "override": args.override,
-            "push": push, "note": args.note}
+            "push": push, "note": args.note, "queued": not args.run_id}
 
 
 def cmd_next(args):
@@ -1337,8 +1371,9 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--workdir")
     context.add_argument("--target")
     context.add_argument("--note")
-    complete = events.add_parser("complete", help="finish a blocked or needs_decision P3 run without an agent")
-    complete.add_argument("--run-id", required=True)
+    complete = events.add_parser("complete", help="finish a blocked or needs_decision P3 run without an agent, "
+                                 "or, without --run-id, queued implementation the user did by hand")
+    complete.add_argument("--run-id", help="the halted run; omit it to complete the queued P3")
     complete.add_argument("--head", required=True, help="full SHA on origin/<branch>")
     complete.add_argument("--pr-url")
     complete.add_argument("--note", required=True)
