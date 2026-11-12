@@ -66,6 +66,8 @@ DOCS = {"kickoff": "kickoff.md", "analysis": "analysis.md", "specs": "milestones
 # The review surface each host binds. A local file wins wherever its viewer annotates.
 SURFACES = {"codex": "local-file", "claude-code": "claude-docs"}
 SURFACE_CHOICES = ("local-file", "claude-docs", "native-doc", "chat")
+# What a phase session says in chat while a document is under review.
+REVIEW_MESSAGE = ["The document holds every detail. Don't restate any of it in chat: no current or target state, no specs or scenario tables, no behaviors to preserve, no edge cases, no summaries of sections.", "Every question the user must answer goes in the document's blocking questions or open decisions, with the options and your recommendation. Chat only points at it.", "Each review message is: one line with the link and the revision, then one 'Waiting on you' list, numbered, one line per item: the decision or approval needed and your recommendation in a few words. Nothing else.", 'Say each thing once. A later message lists only what is still open, without repeating the earlier one.', 'Exception: when the surface is `chat` (the fallback), paste the document once in that message.']
 
 
 class StateError(Exception):
@@ -124,7 +126,8 @@ def surface_plan(folder: Path, doc: str, milestone: str | None, host: str) -> di
             "you; otherwise a native commentable document; otherwise chat comments on the markdown.",
             f"The approved markdown goes to {path}. Rerun with --host if you know the host.",
         ]
-    plan = {"document": name, "host": host, "surface": surface or "choose", "path": path, "steps": steps}
+    plan = {"document": name, "host": host, "surface": surface or "choose", "path": path, "steps": steps,
+            "review_message": REVIEW_MESSAGE}
     if surface == "local-file":
         plan["session_setup"] = {
             "workspace_folder": str(folder.resolve()),

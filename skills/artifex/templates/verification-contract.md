@@ -21,4 +21,7 @@ Routine test and CI runs are not scenarios. List what they don't show. Keep each
 
 ## Material limitations / exclusions
 
+## Open decisions
+Each question the user must answer before approval, with the options and a recommendation. None if there are none.
+
 Approval: pending. Reconcile to approved spec revision before seeking user approval; record decision in `state.json`. Approval does not authorize starting any other session.

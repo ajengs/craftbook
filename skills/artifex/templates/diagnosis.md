@@ -37,5 +37,8 @@ Same cause elsewhere: <sibling entry points, or none>.
 ## Path criteria
 Which conditions for the path are met and how they are shown. Confidence: <high | medium | low> and what would change it. For Confirm: what the user must approve or supply.
 
+## Open decisions
+Each question the user must answer before approval, with the options and a recommendation. None if there are none.
+
 ## Limitations
 What was not reproduced, tried or verified.

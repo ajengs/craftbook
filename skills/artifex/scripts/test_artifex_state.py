@@ -129,6 +129,7 @@ class DocTests(unittest.TestCase):
         self.assertTrue(any("Pages" in step for step in codex["steps"]))
         self.assertEqual(Path(codex["session_setup"]["workspace_folder"]), self.dir.resolve())
         self.assertNotIn("session_setup", claude)
+        self.assertTrue(any("Waiting on you" in rule for rule in claude["review_message"]))
         self.assertEqual(self.cli("doc", "surface", "kickoff", "--host", "other")["surface"], "choose")
         self.cli("doc", "surface", "specs", "--host", "codex", expect=2)
 
