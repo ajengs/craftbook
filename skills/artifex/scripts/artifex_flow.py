@@ -1121,7 +1121,7 @@ class Session:
         self.state = fold(self.events)
         self.checkpoints = []
 
-    def record(self, ev: dict) -> list:
+    def record(self, ev: dict, suppress_notifications: bool = False) -> list:
         stamped = {"seq": len(self.events) + 1, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **ev}
         trial = copy.deepcopy(self.state)
         cps = apply(trial, stamped)
@@ -1133,7 +1133,7 @@ class Session:
         self.checkpoints.extend(cps)
         try:
             from artifex_notify import notify_committed
-            notify_committed(self, stamped, cps)
+            notify_committed(self, stamped, cps, suppress=suppress_notifications)
         except Exception:
             print("artifex notification skipped: adapter unavailable", file=sys.stderr)
         return cps
@@ -1187,7 +1187,7 @@ def cmd_init(args):
     (args.dir / "results").mkdir(parents=True, exist_ok=True)
     session.record({"type": "init", "milestone": args.milestone, "ticket": args.ticket,
                     "code_patterns": args.code_pattern, "doc_patterns": args.doc_pattern,
-                    "umbrella_session": args.umbrella_session})
+                    "umbrella_session": args.umbrella_session}, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run)
 
 
@@ -1208,7 +1208,7 @@ def cmd_handoff(args):
     first = args.kind == "implementation" and "implementation" not in session.state["handoffs"]
     if first:
         ev["target_ahead"] = target_ahead(fields)
-    session.record(ev)
+    session.record(ev, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run)
 
 
@@ -1224,7 +1224,7 @@ def cmd_result(args):
         git_problems, push = check_git(session.state, run, env)
         problems += git_problems
     session.record({"type": "result", "result": env, "problems": problems, "override": args.override,
-                    "push": push})
+                    "push": push}, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run)
 
 
@@ -1261,7 +1261,7 @@ def cmd_event(args):
         ev = complete_event(session, args)
     else:
         ev = {"type": "close", "note": args.note}
-    session.record(ev)
+    session.record(ev, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run)
 
 

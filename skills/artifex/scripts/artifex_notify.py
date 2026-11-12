@@ -35,6 +35,21 @@ def _safe(value) -> str:
     return SENSITIVE_RE.sub(r"\1=[redacted]", text)
 
 
+def _credentials(url: str) -> tuple[str, ...]:
+    try:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        return tuple(value for name in ("key", "token") for value in query.get(name, ()) if value)
+    except ValueError:
+        return ()
+
+
+def _safe_with_secrets(value, secrets: tuple[str, ...]) -> str:
+    text = _safe(value)
+    for secret in secrets:
+        text = text.replace(secret, "[redacted]")
+    return text
+
+
 def valid_url(url: str) -> bool:
     try:
         parsed = urllib.parse.urlsplit(url)
@@ -46,7 +61,8 @@ def valid_url(url: str) -> bool:
         return False
 
 
-def format_message(event: dict, ticket: str, milestone: str, now: datetime | None = None) -> str:
+def format_message(event: dict, ticket: str, milestone: str, now: datetime | None = None,
+                   secrets: tuple[str, ...] = ()) -> str:
     instant = now or datetime.now(timezone.utc)
     utc = instant.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     local = instant.astimezone()
@@ -55,22 +71,22 @@ def format_message(event: dict, ticket: str, milestone: str, now: datetime | Non
     if len(offset) == 5:
         offset = offset[:3] + ":" + offset[3:]
     local_text = local.strftime("%Y-%m-%d %H:%M:%S ") + offset + f" {zone}"
-    fields = [_safe(event.get("kind", "event")).replace("_", " "), f"Ticket: {_safe(ticket)}",
-              f"Milestone: {_safe(milestone)}", f"Task: {_safe(event.get('task', 'workflow'))}",
+    fields = [_safe_with_secrets(event.get("kind", "event"), secrets).replace("_", " "),
+              f"Ticket: {_safe_with_secrets(ticket, secrets)}",
+              f"Milestone: {_safe_with_secrets(milestone, secrets)}",
+              f"Task: {_safe_with_secrets(event.get('task', 'workflow'), secrets)}",
               f"Time: {utc} / {local_text}"]
-    summary = _safe(event.get("summary", ""))[:1000]
+    summary = _safe_with_secrets(event.get("summary", ""), secrets)[:1000]
     if summary:
         fields.append(summary)
     source = event.get("source")
     if isinstance(source, str) and source.startswith("https://") and len(source) <= 500:
-        fields.append(_safe(source))
+        fields.append(_safe_with_secrets(source, secrets))
     text = "\n".join(fields)
     while len(text.encode("utf-8")) > 4096:
-        if summary:
-            summary = summary[:-100]
-            fields[-2 if source else -1] = summary
-        else:
-            fields[-1] = fields[-1][:-100]
+        index = max((i for i, field in enumerate(fields) if field), key=lambda i: len(fields[i].encode("utf-8")))
+        encoded = fields[index].encode("utf-8")
+        fields[index] = encoded[:max(0, len(encoded) - max(1, len(text.encode("utf-8")) - 4096))].decode("utf-8", "ignore")
         text = "\n".join(fields)
     return text
 
@@ -130,7 +146,8 @@ class Notifier:
         if not url:
             return "disabled"
         key = str(event.get("key", ""))
-        if not key or len(key) > 500 or _safe(key) != key:
+        secrets = _credentials(url)
+        if not key or len(key) > 500 or _safe(key) != key or any(secret in key for secret in secrets):
             return "invalid"
         db = None
         try:
@@ -147,7 +164,10 @@ class Notifier:
                 db.execute("UPDATE events SET status='invalid' WHERE event_key=?", (key,))
                 return "invalid"
             deadline = self.clock() + WALL_BUDGET
-            body = json.dumps({"text": format_message(event, self.ticket, self.milestone)},
+            safe_event = {name: _safe_with_secrets(value, secrets) if value is not None else None
+                          for name, value in event.items()}
+            body = json.dumps({"text": format_message(safe_event, self.ticket, self.milestone,
+                                                       secrets=secrets)},
                               ensure_ascii=False).encode("utf-8")
             result = "failed"
             for index in range(MAX_ATTEMPTS):
@@ -226,8 +246,10 @@ def send_event(root: Path, ticket: str, milestone: str, event: dict) -> str:
     return Notifier(root, ticket, milestone).send(event)
 
 
-def notify_committed(session, event: dict, checkpoints: list) -> None:
+def notify_committed(session, event: dict, checkpoints: list, suppress: bool = False) -> None:
     """Adapt only durable router transitions into notification events."""
+    if suppress:
+        return
     state = session.state
     ticket, milestone = state.get("ticket", "unknown"), state.get("milestone", "unknown")
     from artifex_flow import PHASES
@@ -250,9 +272,11 @@ def notify_committed(session, event: dict, checkpoints: list) -> None:
             print("artifex notification skipped: sender unavailable", file=sys.stderr)
     if any(cp.get("halted") for cp in checkpoints):
         cp = next(cp for cp in checkpoints if cp.get("halted"))
+        result = event.get("result", {})
+        episode = cp.get("run_id") or result.get("run_id") or "episode"
         try:
             _warn_status(send_event(session.mdir.resolve().parent.parent, ticket, milestone,
-                                    {"key": f"halt/{cp['kind']}/{event.get('run_id', event.get('seq', 'episode'))}",
+                                    {"key": f"halt/{cp['kind']}/{episode}",
                                      "kind": "blocker", "task": event.get("phase", "workflow"),
                                      "summary": cp.get("message", "Workflow halted")}))
         except Exception:
