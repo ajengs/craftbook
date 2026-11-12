@@ -4,9 +4,9 @@
 
 **Inputs:** Problem, why, goals/objectives, in scope, out of scope, optional hypothesis; relevant references.
 
-**Documents:** kickoff and analysis are human-targeted. Create and review them sequentially using the review surface `SKILL.md`, Documents, binds for this host.
+**Documents:** kickoff and analysis are human-targeted. Create and review them sequentially on the surface `artifex_state.py doc surface` prints (`SKILL.md`, Documents).
 
-1. Draft the kickoff with the user from `templates/kickoff.md`. Ask for **materially missing** inputs only; don't invent goals or scope. Draft it on the review surface `SKILL.md`, Documents, binds for this host (on Codex desktop the file in its viewer, on Claude Code a Claude Docs document). Process passage or visual annotations as focused revisions while preserving the rest of the document.
+1. Draft the kickoff with the user from `templates/kickoff.md`. Ask for **materially missing** inputs only; don't invent goals or scope. Draft it on the surface `artifex_state.py doc surface` prints for it (`SKILL.md`, Documents). Process passage or visual annotations as focused revisions while preserving the rest of the document.
 2. Ask the user to approve the current kickoff revision. Until that approval is explicit, keep revising the same kickoff document; do not create an analysis artifact or `analysis.md`, and do not begin the investigation. On approval, ensure the approved `kickoff.md` derived copy exists as required by `SKILL.md`, Documents. Ask the user whether the approved kickoff is a small task or defect whose scope is already clear enough to use as the milestone; only the user makes this classification. If the user explicitly confirms it, record that confirmation and the scoped task as the selected milestone, then continue at step 6 without creating an analysis.
 3. Unless the user selected the small-task route, investigate the narrowest relevant sources. Separate observed findings, assumptions, and open questions (`standards/evidence.md`).
 4. Draft the analysis from `templates/analysis.md`. Describe the current situation, likely direction and **meaningful** alternatives/trade-offs; don't require an alternative for its own sake. Propose milestones, rough sizing/confidence, dependencies, risks and unresolved questions. Use the same review surface and focused annotation loop as the kickoff.

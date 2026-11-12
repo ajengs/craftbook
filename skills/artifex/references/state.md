@@ -19,6 +19,9 @@ Run `python <skill>/scripts/artifex_state.py --dir <initiative folder> <command>
 | `decide "<text>" [--artifact <name>]` | Append a material decision with its rationale |
 | `show [--section <name>]` | Print the JSON, when recovering or answering a question |
 | `render [--out <path>]` | Produce `STATE.md` for the user |
+| `host` | Print the host and this session's own ids; a new phase session reports its `session_id` from this |
+| `doc surface <doc> [--milestone <id>] [--host <h>]` | Before drafting a human-targeted document: where to review it on this host, the markdown path, the steps and any `session_setup` |
+| `doc approve <doc> --surface <s> [--url] [--revision] [--file] [--fallback]` | The only way to record an approval: hashes the markdown and checks the surface against the host |
 
 `key=value` stores a string, `key:=<json>` stores JSON (lists, numbers), and `key=` removes the field. Unknown sections, tables or fields are refused, which keeps the file in one shape across sessions. Chain several commands in one shell call with `&&` when one checkpoint changes several things.
 
@@ -32,7 +35,7 @@ Run `python <skill>/scripts/artifex_state.py --dir <initiative folder> <command>
 | `consent` | status, response, date, source, scope, umbrella_route | The user answers the consent question |
 | `sessions` row per session name | role, session_id, route, model, effort, runtime, status | A phase session (P1, P2, D1) is created or finishes. `session_id` is the host's own id for it (the thread id in Codex; in Claude Code the transcript name if known, otherwise the `local_…` id the app returns), recorded at creation so its whole transcript can be costed later. A Claude Code `local_…` id doesn't name its transcript, so `artifex_cost.py` falls back to the session's title, which is why the row name must be the exact session name; P3–P6 agents are recorded by the router instead (`event started --agent`). `runtime` says what the host confirmed, or `unconfirmed` |
 | `milestones` row per id | scope, status, session, folder, depends_on, link | P1 selects it or P2 starts. `status` is for before the router takes over; once the milestone has a `run.jsonl`, setting it is refused and `render` shows the router's state instead. `link` ties a D1 folder to its milestone and finding |
-| `artifacts` row per name | path, revision, sha256, decision, date, affects | An approval is recorded, or an approved artifact changes |
+| `artifacts` row per name | path, revision, sha256, decision, date, affects, surface, url, host, fallback | An approval is recorded, or an approved artifact changes |
 | `blockers` row per id | text, since, owner | A blocker appears; `remove` it when resolved |
 | `polls` row per PR | pr, ci, threads, schedule, last | A poll schedule is armed or changes, so a resumed umbrella can re-arm it |
 | `decisions` list | date, text, artifacts | A material decision, once |

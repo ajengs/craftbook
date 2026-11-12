@@ -15,6 +15,9 @@ Commands (each takes --dir <initiative folder>):
     decide   append a material decision:       decide "Version 1.0.0" --artifact analysis
     show     print the JSON (or one section)
     render   print STATE.md, or write it with --out
+    host     print the host and this session's own ids (no write)
+    doc surface <doc>   print where a human-targeted document is reviewed on this host (no write)
+    doc approve <doc>   record an approval, refusing a surface the host doesn't bind
 
 Values are strings; `key:=<json>` passes JSON (lists, numbers, null) and `key=`
 clears a field. Each write bumps `revision`, which is what a coordination
@@ -24,6 +27,7 @@ envelope cites.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -43,7 +47,7 @@ SECTIONS = {
 TABLES = {
     "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "status"),
     "milestones": ("scope", "status", "session", "folder", "depends_on", "link"),
-    "artifacts": ("path", "revision", "sha256", "decision", "date", "affects"),
+    "artifacts": ("path", "revision", "sha256", "decision", "date", "affects", "surface", "url", "host", "fallback"),
     "blockers": ("text", "since", "owner"),
     "polls": ("pr", "ci", "threads", "schedule", "last"),
 }
@@ -51,8 +55,83 @@ STATUSES = ("draft", "pending approval", "implementing", "in review", "verifying
             "blocked", "closed")
 
 
+# Human-targeted documents and where their markdown lives in the initiative folder.
+DOCS = {"kickoff": "kickoff.md", "analysis": "analysis.md", "specs": "milestones/{m}/specs.md",
+        "verification-contract": "milestones/{m}/verification-contract.md",
+        "verification-report": "milestones/{m}/verification-report.md", "diagnosis": "milestones/{m}/diagnosis.md"}
+# The review surface each host binds. A local file wins wherever its viewer annotates.
+SURFACES = {"codex": "local-file", "claude-code": "claude-docs"}
+SURFACE_CHOICES = ("local-file", "claude-docs", "native-doc", "chat")
+
+
 class StateError(Exception):
     pass
+
+
+def detect_host(env=None) -> dict:
+    """Who is running this, from the environment; `ARTIFEX_HOST` overrides."""
+    env = os.environ if env is None else env
+    forced = env.get("ARTIFEX_HOST")
+    if env.get("CLAUDECODE") == "1" and forced in (None, "claude-code"):
+        return {"host": "claude-code", "entrypoint": env.get("CLAUDE_CODE_ENTRYPOINT"),
+                "session_id": env.get("CLAUDE_CODE_SESSION_ID"),
+                "host_session_id": env.get("CLAUDE_CODE_HOST_SESSION_ID")}
+    codex = [k for k in env if k.startswith("CODEX_") and k != "CODEX_HOME"]
+    if (codex and forced is None) or forced == "codex":
+        return {"host": "codex", "entrypoint": None,
+                "session_id": env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"), "host_session_id": None}
+    return {"host": forced or "unknown", "entrypoint": None, "session_id": None, "host_session_id": None}
+
+
+def doc_key(doc: str, milestone: str | None) -> tuple[str, str]:
+    if doc not in DOCS:
+        raise StateError(f"unknown document {doc!r}; documents: {', '.join(DOCS)}")
+    if "{m}" in DOCS[doc] and not milestone:
+        raise StateError(f"{doc} belongs to a milestone; give --milestone")
+    return (f"{doc}-{milestone}" if "{m}" in DOCS[doc] else doc), DOCS[doc].format(m=milestone)
+
+
+def surface_plan(folder: Path, doc: str, milestone: str | None, host: str) -> dict:
+    name, rel = doc_key(doc, milestone)
+    path = str((folder / rel).resolve())
+    surface = SURFACES.get(host)
+    approve = f"artifex_state.py --dir <initiative folder> doc approve {doc}" + (
+        f" --milestone {milestone}" if milestone else "")
+    if surface == "claude-docs":
+        steps = [
+            "Load the `docs` skill, then create a Claude Docs document for it with the docs tools. Without docs "
+            "tools, publish it with the Artifact tool's `document` intent instead.",
+            "Run every review round in that document; apply each comment to its passage.",
+            "Don't create a local file for review and don't open one in the file pane: the user can't comment there.",
+            f"After the user approves a revision, export it as markdown to {path}.",
+            f"Report the document link, its revision if the tool shows one, and {path} to the umbrella, which runs "
+            f"`{approve} --surface claude-docs --url <link> --file {path}`.",
+        ]
+    elif surface == "local-file":
+        steps = [
+            f"Create {path}.",
+            "Open it in Codex's file viewer so the user can annotate passages. Don't create a Pages document.",
+            "Run every review round in that file; apply each annotation to its passage.",
+            f"Report {path} to the umbrella after approval, which runs `{approve} --surface local-file --file {path}`.",
+        ]
+    else:
+        steps = [
+            "Host unknown: use the local file if this host's viewer lets the user annotate a passage and send it to "
+            "you; otherwise a native commentable document; otherwise chat comments on the markdown.",
+            f"The approved markdown goes to {path}. Rerun with --host if you know the host.",
+        ]
+    plan = {"document": name, "host": host, "surface": surface or "choose", "path": path, "steps": steps}
+    if surface == "local-file":
+        plan["session_setup"] = {
+            "workspace_folder": str(folder.resolve()),
+            "rule": "The session that reviews this document must be created with this folder in its workspace "
+                    "(a workspace root or added directory), or the viewer can't open the file. The umbrella sets "
+                    "it when it creates P1, P2 or D1; a session already running without it is recreated, not "
+                    "worked around.",
+        }
+    return {**plan,
+            "if_it_fails": "Say what failed, take passage comments in chat on the markdown file, and tell the "
+                           "umbrella, which approves with --surface chat --fallback \"<what failed>\""}
 
 
 def now() -> str:
@@ -135,6 +214,8 @@ def cmd_upsert(store: Store, args):
     if args.table not in TABLES:
         raise StateError(f"unknown table {args.table!r}; tables: {', '.join(TABLES)}")
     fields = parse_pairs(args.pairs, TABLES[args.table])
+    if args.table == "artifacts" and fields.get("decision") == "approved":
+        raise StateError("record approvals with `doc approve`, which hashes the file and checks the review surface")
     state = store.load()
     if args.table == "milestones" and "status" in fields and fields["status"] is not None:
         folder = (state["milestones"].get(args.name) or {}).get("folder") or fields.get("folder") \
@@ -162,6 +243,35 @@ def cmd_decide(store: Store, args):
         entry["artifacts"] = args.artifact
     state["decisions"].append(entry)
     return store.save(state)
+
+
+def cmd_host(store: Store, args):
+    return detect_host()
+
+
+def cmd_doc_surface(store: Store, args):
+    return surface_plan(store.folder, args.doc, args.milestone, args.host or detect_host()["host"])
+
+
+def cmd_doc_approve(store: Store, args):
+    name, rel = doc_key(args.doc, args.milestone)
+    host = args.host or detect_host()["host"]
+    bound = SURFACES.get(host)
+    if bound and args.surface != bound and not args.fallback:
+        raise StateError(f"{host} reviews documents in {bound}, not {args.surface}; "
+                         "give --fallback with what failed if that surface couldn't be used")
+    if args.surface in ("claude-docs", "native-doc") and not args.url:
+        raise StateError(f"a {args.surface} approval needs --url")
+    file = Path(args.file) if args.file else store.folder / rel
+    if not file.is_file():
+        raise StateError(f"approved markdown not found: {file}")
+    state = store.load()
+    row = state["artifacts"].setdefault(name, {})
+    merge(row, {"path": str(file.resolve()), "sha256": hashlib.sha256(file.read_bytes()).hexdigest(),
+                "decision": "approved", "date": now()[:10], "revision": args.revision, "surface": args.surface,
+                "url": args.url, "host": host, "fallback": args.fallback})
+    out = store.save(state)
+    return {**out, "artifact": name, "sha256": row["sha256"]}
 
 
 def cmd_show(store: Store, args):
@@ -261,6 +371,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("render")
     p.add_argument("--out", help="write STATE.md here instead of printing it")
     p.set_defaults(func=cmd_render)
+    p = sub.add_parser("host")
+    p.set_defaults(func=cmd_host)
+    doc = sub.add_parser("doc").add_subparsers(dest="doc_command", required=True)
+    for name, func in (("surface", cmd_doc_surface), ("approve", cmd_doc_approve)):
+        p = doc.add_parser(name)
+        p.add_argument("doc", choices=sorted(DOCS))
+        p.add_argument("--milestone")
+        p.add_argument("--host", choices=["claude-code", "codex", "other"])
+        p.set_defaults(func=func)
+        if name == "approve":
+            p.add_argument("--surface", choices=SURFACE_CHOICES, required=True)
+            p.add_argument("--file", help="the approved markdown; defaults to the document's place in the folder")
+            p.add_argument("--url", help="the document link, for claude-docs or native-doc")
+            p.add_argument("--revision", help="the provider's revision id, when it shows one")
+            p.add_argument("--fallback", help="what failed, when the host's surface couldn't be used")
     return parser
 
 

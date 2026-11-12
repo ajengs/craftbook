@@ -43,9 +43,9 @@ class StateCliTests(unittest.TestCase):
 
     def test_upsert_merges_one_row_and_json_values_parse(self):
         self.cli("upsert", "artifacts", "specs-M1", "path=milestones/M1/specs.md", "sha256=abc")
-        self.cli("upsert", "artifacts", "specs-M1", "decision=approved", 'affects:=["handoff"]')
+        self.cli("upsert", "artifacts", "specs-M1", "decision=written", 'affects:=["handoff"]')
         self.assertEqual(self.state()["artifacts"]["specs-M1"],
-                         {"path": "milestones/M1/specs.md", "sha256": "abc", "decision": "approved",
+                         {"path": "milestones/M1/specs.md", "sha256": "abc", "decision": "written",
                           "affects": ["handoff"]})
 
     def test_remove_and_decide(self):
@@ -90,6 +90,67 @@ class StateCliTests(unittest.TestCase):
         self.assertIn("no implementation handoff recorded", text)
         out = self.cli("render", "--out", str(self.dir / "STATE.md"))
         self.assertTrue(Path(out["written"]).exists())
+
+
+class HostTests(unittest.TestCase):
+    def test_claude_code_reports_its_transcript_and_app_ids(self):
+        host = st.detect_host({"CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "abc",
+                               "CLAUDE_CODE_HOST_SESSION_ID": "local_x", "CODEX_HOME": "c"})
+        self.assertEqual((host["host"], host["session_id"], host["host_session_id"]), ("claude-code", "abc", "local_x"))
+
+    def test_codex_needs_a_codex_variable_other_than_codex_home(self):
+        self.assertEqual(st.detect_host({"CODEX_HOME": "c"})["host"], "unknown")
+        host = st.detect_host({"CODEX_SANDBOX": "seatbelt", "CODEX_THREAD_ID": "t1"})
+        self.assertEqual((host["host"], host["session_id"]), ("codex", "t1"))
+
+    def test_override_wins(self):
+        self.assertEqual(st.detect_host({"ARTIFEX_HOST": "codex"})["host"], "codex")
+
+
+class DocTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "T-1"
+        StateCliTests.cli(self, "init", "--ticket", "T-1")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    cli = StateCliTests.cli
+    state = StateCliTests.state
+
+    def test_surface_follows_the_host(self):
+        claude = self.cli("doc", "surface", "kickoff", "--host", "claude-code")
+        self.assertEqual((claude["surface"], claude["document"]), ("claude-docs", "kickoff"))
+        self.assertTrue(any("file pane" in step for step in claude["steps"]))
+        codex = self.cli("doc", "surface", "specs", "--milestone", "M1", "--host", "codex")
+        self.assertEqual(codex["surface"], "local-file")
+        self.assertTrue(codex["path"].endswith(str(Path("milestones/M1/specs.md"))))
+        self.assertTrue(any("Pages" in step for step in codex["steps"]))
+        self.assertEqual(Path(codex["session_setup"]["workspace_folder"]), self.dir.resolve())
+        self.assertNotIn("session_setup", claude)
+        self.assertEqual(self.cli("doc", "surface", "kickoff", "--host", "other")["surface"], "choose")
+        self.cli("doc", "surface", "specs", "--host", "codex", expect=2)
+
+    def test_approve_hashes_the_file_and_checks_the_surface(self):
+        (self.dir / "kickoff.md").write_text("# Kickoff\n", encoding="utf-8")
+        self.cli("doc", "approve", "kickoff", "--host", "claude-code", "--surface", "local-file", expect=2)
+        self.cli("doc", "approve", "kickoff", "--host", "claude-code", "--surface", "claude-docs", expect=2)
+        out = self.cli("doc", "approve", "kickoff", "--host", "claude-code", "--surface", "claude-docs",
+                       "--url", "https://claude.ai/artifact/x")
+        row = self.state()["artifacts"]["kickoff"]
+        self.assertEqual((row["decision"], row["surface"], row["sha256"]), ("approved", "claude-docs", out["sha256"]))
+
+    def test_fallback_is_recorded_and_missing_files_refused(self):
+        self.cli("doc", "approve", "analysis", "--host", "codex", "--surface", "local-file", expect=2)
+        (self.dir / "analysis.md").write_text("x\n", encoding="utf-8")
+        self.cli("doc", "approve", "analysis", "--host", "codex", "--surface", "chat",
+                 "--fallback", "viewer would not open")
+        self.assertEqual(self.state()["artifacts"]["analysis"]["fallback"], "viewer would not open")
+
+    def test_approvals_only_through_doc_approve(self):
+        self.cli("upsert", "artifacts", "kickoff", "decision=approved", expect=2)
+        self.cli("upsert", "artifacts", "handoff-M1", "decision=written", "sha256=abc")
 
 
 if __name__ == "__main__":

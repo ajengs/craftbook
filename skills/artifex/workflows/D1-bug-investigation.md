@@ -5,7 +5,7 @@
 **Inputs:** The ticket, or the P5 finding with its evidence; the code and environment access the user confirms, and the telemetry and artifacts the environment offers. For a P5 finding, the milestone's PR and the head it was verified on.
 
 **Documents:** `diagnosis.md` (`templates/diagnosis.md`). It replaces the specs, the verification contract and the verification handoff for this bug. It is human-targeted on Confirm and agent-facing markdown on Direct and Reproduced, where no artifact or viewer step applies.
-- The path is not known until step 5, so draft `diagnosis.md` as plain markdown while investigating. When the path is Confirm, or the user asks to be consulted, move the draft on the review surface `SKILL.md`, Documents, binds for this host (on Codex desktop the file in its viewer, on Claude Code a Claude Docs document). Process passage or visual annotations as focused revisions while preserving the rest of the document.
+- The path is not known until step 5, so draft `diagnosis.md` as plain markdown while investigating. When the path is Confirm, or the user asks to be consulted, move the draft on the surface `artifex_state.py doc surface` prints for it (`SKILL.md`, Documents). Process passage or visual annotations as focused revisions while preserving the rest of the document.
 - Keep the root-cause and fix-approach approvals in the same document, each against a named revision. On each approval, ensure the approved `diagnosis.md` derived copy exists and that its reference or hash is recorded as `SKILL.md`, Documents requires.
 
 **Codes:** internal codes stay in notes. Keep them out of the reproduction, tests, commits, the PR and the ticket (`policies/core.md`).
