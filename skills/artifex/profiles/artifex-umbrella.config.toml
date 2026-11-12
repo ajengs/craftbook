@@ -1,2 +1,7 @@
+# Completion rule (instructional; not a native configuration setting):
+# Do independent coordination, then use the exposed wait_agent (legacy: wait).
+# On timeout or user interruption, reconcile inventory before waiting again.
+# Keep the turn active until required results are consumed or monitoring is blocked.
+# No shell sleep/poll loop. See references/orchestration.md, Host completion rules.
 model = "gpt-6-luna"
 model_reasoning_effort = "low"

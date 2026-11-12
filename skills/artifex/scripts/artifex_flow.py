@@ -816,15 +816,12 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
     if not actions:
         if state["active"]:
             actions.append({"action": "wait", "phase": None,
-                            "reason": "running: " + ", ".join(sorted(state["active"]))})
+                            "reason": "running: " + ", ".join(sorted(state["active"])),
+                            "await_runs": [{"run_id": rid, "phase": run["phase"], "agent": run.get("agent"),
+                                            "result_path": f"results/{rid}.json"}
+                                           for rid, run in sorted(state["active"].items()) if run.get("started")]})
         else:
             actions.append({"action": "idle", "reason": idle_reason(state)})
-    waiting = [{"run_id": rid, "phase": run["phase"], "agent": run.get("agent"),
-                "result_path": f"results/{rid}.json"}
-               for rid, run in sorted(state["active"].items()) if run.get("started")]
-    for action in actions:
-        if action["action"] == "wait" and waiting:
-            action["await_runs"] = waiting
     return actions
 
 

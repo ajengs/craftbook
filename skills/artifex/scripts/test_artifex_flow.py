@@ -986,51 +986,92 @@ class CompletionReconciliationTests(unittest.TestCase):
     cli = CliTests.cli
     result_file = CliTests.result_file
 
-    def test_duplicate_completion_after_resume_does_not_dispatch_twice(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.mdir = Path(tmp) / "M1"
-            self.mdir.mkdir()
-            (self.mdir / "results").mkdir()
-            session = af.Session(self.mdir, must_exist=False)
-            session.record({"type": "init", "milestone": "M1", "ticket": "T-1"})
-            handoff = self.mdir / "implementation-handoff.md"
-            handoff.write_text("---\nbranch: b\nworkdir: w\ntarget: main\n---\n", encoding="utf-8")
-            session.record({"type": "handoff", "kind": "implementation", "path": handoff.name,
-                            "sha256": af.file_sha(handoff), "fields": {
-                                "branch": "b", "workdir": "w", "target": "main", "depends_on": []}})
-            p3 = session.respond()["actions"][0]
-            self.cli("event", "started", "--run-id", p3["run_id"], "--agent", "worker")
-            waiting = self.cli("next")["actions"][0]["await_runs"][0]
-            self.assertEqual(waiting["agent"], "worker")
-            self.assertTrue(Path(waiting["result_path"]).is_absolute())
-            path = self.result_file(p3["run_id"], phase="P3", status="completed", head=sha(1),
-                                    pr_url="https://example/pr/1")
-            with patch.object(af, "check_git", return_value=([], {"class": "initial"})):
-                p4 = self.cli("result", path)["actions"][0]
-                repeated = self.cli("result", path)["actions"][0]
-                self.assertEqual(repeated["run_id"], p4["run_id"])
-                self.assertIn("unconfirmed", repeated)
-                self.cli("event", "started", "--run-id", p4["run_id"], "--agent", "reviewer")
-                self.cli("event", "umbrella", "--session", "replacement")
-                self.assertEqual(self.cli("result", path)["checkpoints"], [])
-                (self.mdir / "review.md").write_text("Fix the missing check.", encoding="utf-8")
-                review = self.result_file(p4["run_id"], phase="P4", status="changes_requested", head=sha(1),
-                                          findings=1, artifacts=["review.md"])
-                result = self.cli("result", review)
-                self.assertEqual(result["checkpoints"][0]["kind"], "changes_requested")
-                rework = result["actions"][0]
-                repeated = self.cli("result", review)["actions"][0]
-                self.assertEqual(repeated["run_id"], rework["run_id"])
-                self.assertIn("unconfirmed", repeated)
-                self.cli("event", "started", "--run-id", rework["run_id"], "--agent", "reworker")
-                replay = self.cli("result", review)
-                self.assertEqual(replay["checkpoints"], [])
-                self.assertFalse(any(a["action"] == "spawn" for a in replay["actions"]))
-                events = af.read_events(self.mdir)
-                self.assertEqual(sum(e["type"] == "result" for e in events), 2)
-                self.assertEqual(sum(e["type"] == "dispatched" for e in events), 3)
-                self.result_file(p4["run_id"], phase="P4", status="completed", head=sha(1), artifacts=["review.md"])
-                self.cli("result", review, expect=2)
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mdir = Path(self.tmp.name) / "M1"
+        self.mdir.mkdir()
+        (self.mdir / "results").mkdir()
+        session = af.Session(self.mdir, must_exist=False)
+        session.record({"type": "init", "milestone": "M1", "ticket": "T-1"})
+        handoff = self.mdir / "implementation-handoff.md"
+        handoff.write_text("---\nbranch: b\nworkdir: w\ntarget: main\n---\n", encoding="utf-8")
+        session.record({"type": "handoff", "kind": "implementation", "path": handoff.name,
+                        "sha256": af.file_sha(handoff), "fields": {
+                            "branch": "b", "workdir": "w", "target": "main", "depends_on": []}})
+        self.p3 = session.respond()["actions"][0]
+        self.cli("event", "started", "--run-id", self.p3["run_id"], "--agent", "worker")
+        self.path = self.result_file(self.p3["run_id"], phase="P3", status="completed", head=sha(1),
+                                     pr_url="https://example/pr/1")
+        self.git_check = self.enterContext(patch.object(af, "check_git", return_value=([], {"class": "initial"})))
+
+    def start_review(self):
+        p4 = self.cli("result", self.path)["actions"][0]
+        self.cli("event", "started", "--run-id", p4["run_id"], "--agent", "reviewer")
+        (self.mdir / "review.md").write_text("Fix the missing check.", encoding="utf-8")
+        return p4, self.result_file(p4["run_id"], phase="P4", status="changes_requested", head=sha(1),
+                                    findings=1, artifacts=["review.md"])
+
+    def test_wait_contains_absolute_result_path_and_agent_id(self):
+        waiting = self.cli("next")["actions"][0]["await_runs"][0]
+        self.assertEqual(waiting["agent"], "worker")
+        self.assertEqual(waiting["result_path"], str(Path(self.path).resolve()))
+
+    def test_duplicate_implementation_completion_after_resume_does_not_dispatch_twice(self):
+        p4 = self.cli("result", self.path)["actions"][0]
+        repeated = self.cli("result", self.path)["actions"][0]
+        self.assertEqual(repeated["run_id"], p4["run_id"])
+        self.assertIn("unconfirmed", repeated)
+        self.cli("event", "started", "--run-id", p4["run_id"], "--agent", "reviewer")
+        self.cli("event", "umbrella", "--session", "replacement")
+        replay = self.cli("result", self.path)
+        self.assertEqual(replay["checkpoints"], [])
+        self.assertFalse(any(a["action"] == "spawn" for a in replay["actions"]))
+        self.assertEqual(sum(e["type"] == "result" for e in af.read_events(self.mdir)), 1)
+
+    def test_duplicate_review_findings_do_not_dispatch_rework_twice(self):
+        _, review = self.start_review()
+        result = self.cli("result", review)
+        self.assertEqual(result["checkpoints"][0]["kind"], "changes_requested")
+        rework = result["actions"][0]
+        repeated = self.cli("result", review)["actions"][0]
+        self.assertEqual(repeated["run_id"], rework["run_id"])
+        self.assertIn("unconfirmed", repeated)
+        self.cli("event", "started", "--run-id", rework["run_id"], "--agent", "reworker")
+        replay = self.cli("result", review)
+        self.assertEqual(replay["checkpoints"], [])
+        self.assertFalse(any(a["action"] == "spawn" for a in replay["actions"]))
+        events = af.read_events(self.mdir)
+        self.assertEqual(sum(e["type"] == "result" for e in events), 2)
+        self.assertEqual(sum(e["type"] == "dispatched" for e in events), 3)
+
+    def test_changed_result_for_closed_run_is_refused_without_recording(self):
+        p4, review = self.start_review()
+        self.cli("result", review)
+        changed = self.result_file(p4["run_id"], phase="P4", status="completed", head=sha(1), artifacts=["review.md"])
+        before = af.read_events(self.mdir)
+        self.cli("result", changed, expect=2)
+        self.assertEqual(af.read_events(self.mdir), before)
+
+    def test_override_accepted_result_can_be_replayed_without_revalidation(self):
+        self.git_check.return_value = (["remote unavailable"], {"class": "initial"})
+        first = self.cli("result", self.path, "--override", "User accepted the remote check failure")
+        self.assertEqual(first["actions"][0]["phase"], "P4")
+        before = af.read_events(self.mdir)
+        self.git_check.reset_mock()
+        replay = self.cli("result", self.path)
+        self.assertEqual(replay["checkpoints"], [])
+        self.assertEqual(replay["actions"][0]["run_id"], first["actions"][0]["run_id"])
+        self.assertEqual(af.read_events(self.mdir), before)
+        self.git_check.assert_not_called()
+
+    def test_rejected_result_cannot_be_replayed_after_run_failed(self):
+        self.git_check.return_value = (["remote unavailable"], None)
+        self.assertEqual(self.cli("result", self.path)["actions"][0]["action"], "halted")
+        self.cli("event", "run-failed", "--run-id", self.p3["run_id"], "--reason", "agent ended")
+        before = af.read_events(self.mdir)
+        self.cli("result", self.path, expect=2)
+        self.assertEqual(af.read_events(self.mdir), before)
 
 
 class DispatchConfirmationTests(unittest.TestCase):
@@ -1042,6 +1083,54 @@ class DispatchConfirmationTests(unittest.TestCase):
         self.assertEqual(action["await_runs"], [{"run_id": p3["run_id"], "phase": "P3",
                                                "agent": "worker-thread",
                                                "result_path": "results/M1-P3-1.json"}])
+
+    def reviewing(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], head=sha(1), push="initial")
+        p4, = sim.spawned()
+        return sim, p4
+
+    def test_phase_specific_waits_do_not_monitor_unrelated_runs(self):
+        for blocker in ("dependency", "delivery", "handoff"):
+            with self.subTest(blocker=blocker):
+                sim, _ = self.reviewing()
+                sim.apply({"type": "poll", "kind": "ci", "outcome": "failing", "head": sha(1)})
+                delivery, hash_of = None, None
+                if blocker == "dependency":
+                    fields = dict(sim.state["handoffs"]["implementation"]["fields"], depends_on=["M0 merged"])
+                    sim.apply({"type": "handoff", "kind": "implementation", "path": "implementation-handoff.md",
+                               "sha256": "j" * 64, "fields": fields})
+                elif blocker == "delivery":
+                    delivery = {"status": "declined"}
+                else:
+                    hash_of = lambda path: "changed"
+                action, = af.next_actions(sim.state, hash_of=hash_of, delivery=delivery)
+                self.assertEqual((action["action"], action["phase"]), ("wait", "P3"))
+                self.assertNotIn("await_runs", action)
+
+    def test_running_wait_lists_two_agents_including_an_unrecorded_agent_id(self):
+        sim, p4 = self.reviewing()
+        sim.apply({"type": "poll", "kind": "ci", "outcome": "failing", "head": sha(1)})
+        p3, = sim.spawned()
+        sim.apply({"type": "started", "run_id": p3["run_id"], "agent": "ci-worker"})
+        action, = sim.step()
+        self.assertEqual(action["phase"], None)
+        self.assertEqual(action["await_runs"], [
+            {"run_id": p3["run_id"], "phase": "P3", "agent": "ci-worker", "result_path": p3["result_path"]},
+            {"run_id": p4["run_id"], "phase": "P4", "agent": None, "result_path": p4["result_path"]},
+        ])
+
+    def test_halt_preserves_a_live_reviewer_without_dispatching_more_work(self):
+        sim, p4 = self.reviewing()
+        sim.apply({"type": "poll", "kind": "ci", "outcome": "failing", "head": sha(1)})
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], "blocked", summary="Push denied")
+        self.assertEqual(list(sim.state["active"]), [p4["run_id"]])
+        action, = sim.step()
+        self.assertEqual(action["action"], "halted")
+        self.assertNotIn("await_runs", action)
+        self.assertIn(p4["run_id"], af.render_status(sim.state))
 
     def test_unconfirmed_spawn_is_printed_again_with_the_same_run_id(self):
         sim = Sim()

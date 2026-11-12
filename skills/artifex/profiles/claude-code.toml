@@ -8,6 +8,13 @@
 # session start same-tier or cheaper ones). Then record the refusal and the
 # model the session actually got, as SKILL.md, Model allocation describes.
 
+# Completion rule for the umbrella (instructional, not a Claude setting):
+# Background subagents: yield when no independent work remains; consume the
+# completion notification in its later turn and reconcile before other work.
+# Foreground subagents: the Agent call waits. Do not use a Codex wait/sleep loop.
+# Separate phase sessions need their own verified coordination/wake channel.
+# See references/orchestration.md, Host completion rules, for sources and limits.
+
 [umbrella]            # profiles/artifex-umbrella.config.toml: gpt-6-luna, low
 alias = "sonnet"
 model = "claude-sonnet-5-5"
