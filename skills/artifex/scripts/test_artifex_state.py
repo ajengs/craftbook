@@ -153,5 +153,64 @@ class DocTests(unittest.TestCase):
         self.cli("upsert", "artifacts", "handoff-M1", "decision=written", "sha256=abc")
 
 
+class BriefTests(unittest.TestCase):
+    QUESTION = "Do you authorize the umbrella and every phase session to exchange coordination messages?"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "T-1"
+        request = Path(self.tmp.name) / "request.txt"
+        request.write_text('/artifex Ticket T-1. Add "--version" for $USER\nsecond line\n', encoding="utf-8")
+        self.cli("init", "--ticket", "T-1", "--request-file", str(request))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    cli = StateCliTests.cli
+    state = StateCliTests.state
+
+    def consent(self, status="authorized", response="yes"):
+        reply = Path(self.tmp.name) / "reply.txt"
+        reply.write_text(response, encoding="utf-8")
+        self.cli("consent", "--status", status, "--question", self.QUESTION, "--response-file", str(reply),
+                 "--source", "umbrella chat", "--route", "local_u")
+
+    def brief(self, *args, expect=0):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = st.main(["--dir", str(self.dir), "brief", *args])
+        self.assertEqual(code, expect, err.getvalue())
+        return out.getvalue()
+
+    def test_brief_quotes_request_question_and_reply_verbatim(self):
+        self.consent()
+        text = self.brief("P1")
+        self.assertIn('> /artifex Ticket T-1. Add "--version" for $USER\n> second line', text)
+        self.assertIn(f"> {self.QUESTION}", text)
+        self.assertIn("The user replied, verbatim:\n> yes", text)
+        self.assertIn("Umbrella route: local_u", text)
+        self.assertIn("doc surface kickoff", text)
+        self.assertIn('named "T-1 P1 research"', text)
+
+    def test_brief_refuses_without_a_verbatim_consent_record(self):
+        self.brief("P1", expect=2)
+        self.cli("set", "consent", "response=yes", expect=2)
+
+    def test_declined_consent_briefs_manual_relay(self):
+        self.consent(status="declined", response="no")
+        self.assertIn("Don't message the umbrella", self.brief("P1"))
+
+    def test_p2_brief_needs_a_milestone_and_lists_approved_artifacts(self):
+        self.consent()
+        self.brief("P2", expect=2)
+        (self.dir / "kickoff.md").write_text("k\n", encoding="utf-8")
+        self.cli("doc", "approve", "kickoff", "--host", "codex", "--surface", "local-file")
+        self.cli("upsert", "milestones", "M1", "scope=version flag")
+        text = self.brief("P2", "--milestone", "M1")
+        self.assertIn("Milestone: M1. Scope: version flag", text)
+        self.assertIn("- kickoff:", text)
+        self.assertIn("doc surface specs --milestone M1", text)
+
+
 if __name__ == "__main__":
     unittest.main()

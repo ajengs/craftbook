@@ -16,6 +16,8 @@ Commands (each takes --dir <initiative folder>):
     show     print the JSON (or one section)
     render   print STATE.md, or write it with --out
     host     print the host and this session's own ids (no write)
+    consent  record the consent question and the user's reply, both verbatim
+    brief    print the launch prompt for a P1, P2 or D1 session (no write)
     doc surface <doc>   print where a human-targeted document is reviewed on this host (no write)
     doc approve <doc>   record an approval, refusing a surface the host doesn't bind
 
@@ -39,10 +41,10 @@ import artifex_flow  # noqa: E402
 
 SCHEMA = 1
 SECTIONS = {
-    "initiative": ("ticket", "title", "track"),
+    "initiative": ("ticket", "title", "track", "request"),
     "status": ("phase", "status", "next"),
     "workspace": ("workdir", "workdir_kind", "work_folder", "project_folder", "artifact_folder", "source"),
-    "consent": ("status", "response", "date", "source", "scope", "umbrella_route"),
+    "consent": ("status", "question", "response", "date", "source", "scope", "umbrella_route"),
 }
 TABLES = {
     "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "status"),
@@ -138,9 +140,12 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def new_state(ticket: str, title: str | None, track: str) -> dict:
+def new_state(ticket: str, title: str | None, track: str, request: str | None = None) -> dict:
+    initiative = {"ticket": ticket, "title": title, "track": track}
+    if request:
+        initiative["request"] = request
     return {"schema": SCHEMA, "revision": 0, "updated": None,
-            "initiative": {"ticket": ticket, "title": title, "track": track},
+            "initiative": initiative,
             "status": {}, "workspace": {}, "consent": {},
             **{table: {} for table in TABLES}, "decisions": []}
 
@@ -196,13 +201,15 @@ class Store:
 def cmd_init(store: Store, args):
     if store.path.exists():
         raise StateError(f"{store.path} already exists")
-    return store.save(new_state(args.ticket, args.title, args.track))
+    return store.save(new_state(args.ticket, args.title, args.track, verbatim(args, "request")))
 
 
 def cmd_set(store: Store, args):
     if args.section not in SECTIONS:
         raise StateError(f"unknown section {args.section!r}; sections: {', '.join(SECTIONS)}")
     fields = parse_pairs(args.pairs, SECTIONS[args.section])
+    if args.section == "consent" and {"question", "response", "status"} & set(fields):
+        raise StateError("record consent with the `consent` command, which keeps the question and reply verbatim")
     if args.section == "status" and fields.get("status") not in (None, *STATUSES):
         raise StateError(f"status must be one of: {', '.join(STATUSES)}")
     state = store.load()
@@ -272,6 +279,99 @@ def cmd_doc_approve(store: Store, args):
                 "url": args.url, "host": host, "fallback": args.fallback})
     out = store.save(state)
     return {**out, "artifact": name, "sha256": row["sha256"]}
+
+
+SKILL_DIR = Path(__file__).resolve().parent.parent
+PHASE_BRIEFS = {
+    "P1": ("research", "workflows/P1-research.md", "kickoff"),
+    "P2": ("analysis", "workflows/P2-development-analysis.md", "specs"),
+    "D1": ("bug investigation", "workflows/D1-bug-investigation.md", "diagnosis"),
+}
+
+
+def verbatim(args, name: str, required: bool = False):
+    """Text given inline or, safer for quotes, newlines and shells that rewrite `/...`, from a file."""
+    inline, file = getattr(args, name), getattr(args, f"{name}_file")
+    if inline is not None and file is not None:
+        raise StateError(f"give --{name} or --{name}-file, not both")
+    if file is not None:
+        return Path(file).read_text(encoding="utf-8").rstrip("\n")
+    if inline is None and required:
+        raise StateError(f"--{name} or --{name}-file is required")
+    return inline
+
+
+def cmd_consent(store: Store, args):
+    args.question, args.response = verbatim(args, "question", True), verbatim(args, "response", True)
+    state = store.load()
+    host = detect_host()
+    merge(state["consent"], {
+        "status": args.status, "question": args.question, "response": args.response, "date": now()[:10],
+        "source": args.source, "scope": args.scope or state["consent"].get("scope"),
+        "umbrella_route": args.route or host["host_session_id"] or host["session_id"]
+        or state["consent"].get("umbrella_route"),
+    })
+    return store.save(state)
+
+
+def _quote(text: str) -> str:
+    return "\n".join("> " + line for line in str(text).splitlines() or [""])
+
+
+def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: str | None) -> str:
+    """The launch prompt, built only from recorded state so nothing is paraphrased on the way."""
+    title, workflow, first_doc = PHASE_BRIEFS[phase]
+    ini, consent = state["initiative"], state["consent"]
+    if phase == "P2" and not milestone:
+        raise StateError("a P2 brief needs --milestone")
+    if not consent.get("status"):
+        raise StateError("no consent recorded; ask the consent question and record it with `consent` first")
+    if consent["status"] == "authorized" and not (consent.get("question") and consent.get("response")):
+        raise StateError("consent lacks the verbatim question or reply; record it again with `consent`")
+    ticket = ini["ticket"]
+    name = name or " ".join(x for x in (ticket, phase, title, milestone) if x)
+    script = SKILL_DIR / "scripts" / "artifex_state.py"
+    cmd = f'python "{script}" --dir "{folder.resolve()}"'
+    doc_arg = first_doc + (f" --milestone {milestone}" if milestone and first_doc != "kickoff" else "")
+    lines = [
+        f"You are the Artifex {phase} {title} session for {ticket}, named \"{name}\". You are not the umbrella.",
+        "",
+        f"Skill: {SKILL_DIR / 'SKILL.md'}. Workflow: {SKILL_DIR / workflow}. Read those and what they link, "
+        "nothing else of the package.",
+        f"Initiative folder: {folder.resolve()}. State: state.json revision {state['revision']}; read it with "
+        f"`{cmd} show`.",
+        "",
+        "First steps:",
+        f"1. Run `{cmd} host` and send the umbrella its `session_id` with your first message.",
+        f"2. Before drafting the {first_doc}, run `{cmd} doc surface {doc_arg}` and follow what it prints.",
+    ]
+    if milestone:
+        row = state["milestones"].get(milestone) or {}
+        lines += ["", f"Milestone: {milestone}" + (f". Scope: {row['scope']}" if row.get("scope") else "")]
+    approved = {k: v for k, v in state["artifacts"].items() if v.get("decision") == "approved"}
+    if approved:
+        lines += ["", "Approved artifacts (path, SHA-256):"]
+        lines += [f"- {k}: {v.get('path')} ({v.get('sha256')})" for k, v in approved.items()]
+    if ini.get("request"):
+        lines += ["", "The user's request, verbatim:", _quote(ini["request"])]
+    lines += ["", "## Coordination authorization"]
+    if consent["status"] == "authorized":
+        lines += [
+            f"On {consent.get('date')}, in {consent.get('source') or 'the umbrella chat'}, the umbrella asked the "
+            "user:", _quote(consent["question"]), "", "The user replied, verbatim:", _quote(consent["response"]), "",
+            "That reply is the user's direct authorization for the umbrella and every phase session it creates "
+            f"for {ticket} to message each other in both directions, within the scope asked about"
+            + (f": {consent['scope']}" if consent.get("scope") else "") + ".",
+            f"Umbrella route: {consent.get('umbrella_route') or 'not recorded'}.",
+        ]
+    else:
+        lines += [f"Not authorized (status: {consent['status']}). Don't message the umbrella; give every "
+                  "checkpoint to the user to relay."]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_brief(store: Store, args):
+    return brief(store.folder, store.load(), args.phase, args.milestone, args.name)
 
 
 def cmd_show(store: Store, args):
@@ -347,7 +447,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ticket", required=True)
     p.add_argument("--title")
     p.add_argument("--track", choices=["feature", "bug"], default="feature")
+    p.add_argument("--request", help="the user's Artifex invocation, verbatim")
+    p.add_argument("--request-file", help="a file holding the invocation verbatim; prefer it over --request")
     p.set_defaults(func=cmd_init)
+    p = sub.add_parser("consent")
+    p.add_argument("--status", choices=["authorized", "declined", "manual relay"], required=True)
+    p.add_argument("--question", help="the question exactly as asked")
+    p.add_argument("--question-file", help="a file holding the question verbatim")
+    p.add_argument("--response", help="the user's reply exactly as written")
+    p.add_argument("--response-file", help="a file holding the reply verbatim")
+    p.add_argument("--source", help="where it was asked, such as the umbrella chat")
+    p.add_argument("--scope")
+    p.add_argument("--route", help="the umbrella's route; defaults to this session's own id")
+    p.set_defaults(func=cmd_consent)
+    p = sub.add_parser("brief")
+    p.add_argument("phase", choices=sorted(PHASE_BRIEFS))
+    p.add_argument("--milestone")
+    p.add_argument("--name", help="the session name, if not the conventional one")
+    p.set_defaults(func=cmd_brief)
     p = sub.add_parser("set")
     p.add_argument("section")
     p.add_argument("pairs", nargs="+")
