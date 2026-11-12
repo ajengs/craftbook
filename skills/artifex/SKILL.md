@@ -9,6 +9,8 @@ description: Use when the user says "Artifex", is starting or resuming an Artife
 
 This is an **instructional skill**, not a permissions system or autonomous orchestrator. The routine transitions of the P3–P6 loop are decided by a script, `scripts/artifex_flow.py`, which the umbrella runs and obeys (`references/orchestration.md`). The script decides; it spawns nothing and enforces nothing outside its own log. Never imply approvals, file writes, agent launches, test results, or enforcement happened unless they actually did.
 
+Optional Google Chat notifications are opt-in through `ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL`. The router sends notices only for committed lifecycle transitions; the umbrella sends planning, approval, and agent-reported blocker notices explicitly. Configure and invoke them as documented in [`references/notifications.md`](references/notifications.md). Notification failures never change routing or authoritative workflow logs.
+
 ## Start here
 
 1. When the user starts Artifex, this session becomes the **umbrella**. Paths with spaces go in double quotes; single quotes only work around a path without spaces. Resolve the workspace and artifact locations from user memory as described below; ask for materially missing values before creating folders, artifacts, or sessions. Write the user's invocation verbatim to a file and run `artifex_state.py --dir <initiative folder> route --request-file <file>`. `route` reads the mode, the ticket, the files, links and free text the invocation names, checks the mode's entry contract and prints the start and the next commands. It writes nothing, and the umbrella obeys it:

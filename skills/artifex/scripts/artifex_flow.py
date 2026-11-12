@@ -1131,6 +1131,11 @@ class Session:
         self.events.append(stamped)
         self.state = trial
         self.checkpoints.extend(cps)
+        try:
+            from artifex_notify import notify_committed
+            notify_committed(self, stamped, cps)
+        except Exception:
+            print("artifex notification skipped: adapter unavailable", file=sys.stderr)
         return cps
 
     def delivery(self):
