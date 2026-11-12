@@ -288,6 +288,32 @@ class ModeTests(unittest.TestCase):
         out = self.route(f'/artifex milestone ART-20 "{missing}" the uploader\'s retries', expect=2)
         self.assertIn("path not found", out["error"])
 
+    def test_single_quoted_paths_are_found_or_refused(self):
+        scope = self.root / "scope.md"
+        scope.write_text("scope\n", encoding="utf-8")
+        out = self.route(f"/artifex milestone ART-20 '{scope}' add retries")
+        self.assertEqual((out["files"], out["text"]), ([str(scope.resolve())], "add retries"))
+        out = self.route(f"/artifex milestone ART-20 '{self.root / 'gone.md'}' add retries", expect=2)
+        self.assertIn("path not found", out["error"])
+        out = self.route(f"/artifex milestone ART-20 '{self.docs / 'my scope.md'}' add retries", expect=2)
+        self.assertIn("path not found", out["error"])
+
+    def test_only_absolute_drive_and_dot_paths_are_refused_when_missing(self):
+        out = self.route("/artifex milestone ART-20 skills/artifex/scripts/artifex_flow.py and/or retries")
+        self.assertEqual((out["files"], out["text"]),
+                         ([], "skills/artifex/scripts/artifex_flow.py and/or retries"))
+        for token in ("./gone.md", "../gone.md", "D:\\nowhere\\gone.md", "/nowhere/gone.md"):
+            out = self.route(f"/artifex milestone ART-20 {token}", expect=2)
+            self.assertIn("path not found", out["error"])
+
+    def test_exported_headings_are_recognised_without_flags(self):
+        files = self.implementation_files()
+        files["specs"].write_text("# ART-19 M1 Specifications — modes\n\nbody\n", encoding="utf-8")
+        files["contract"].write_text("# ART-19 M1 Verification contract — modes\n\nbody\n", encoding="utf-8")
+        request = "/artifex implementation ART-20 " + " ".join(f'"{p}"' for p in files.values())
+        out = self.route(request)
+        self.assertEqual(out["contract"]["result"], "artifacts ready")
+
     def test_every_command_init_prints_runs(self):
         import subprocess
         files = self.implementation_files()

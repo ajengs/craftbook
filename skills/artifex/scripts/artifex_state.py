@@ -351,7 +351,7 @@ REQUEST_FLAGS = {"--mode": "mode", "--ticket": "ticket", "--milestone": "milesto
 TICKET_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
 WEB_LINK = re.compile(r"^https?://", re.IGNORECASE)
 DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
-FILE_EXTENSION = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,7}$")
+PATH_PREFIX = re.compile(r"^(?:[\/]|\.{1,2}[\/])")
 
 
 def canonical_mode(value: str) -> str:
@@ -388,7 +388,7 @@ def parse_request(text: str, overrides: dict | None = None) -> dict:
                 if i >= len(tokens):
                     raise StateError(f"{name} needs a value")
                 value = tokens[i]
-            flags[REQUEST_FLAGS[name]] = value
+            flags[REQUEST_FLAGS[name]] = value.strip("'")
         else:
             rest.append(tokens[i])
         i += 1
@@ -409,13 +409,14 @@ def parse_request(text: str, overrides: dict | None = None) -> dict:
     files, links, words = [], [], []
 
     def place(token: str) -> None:
+        token = token.strip("'")
         if WEB_LINK.match(token):
             links.append(token)
         elif Path(token).is_file():
             files.append(str(Path(token).resolve()))
         elif Path(token).is_dir():
             words.append(token)
-        elif DRIVE_PATH.match(token) or (("/" in token or "\\" in token) and FILE_EXTENSION.search(token)):
+        elif DRIVE_PATH.match(token) or PATH_PREFIX.match(token):
             raise StateError(f"path not found: {token}")
         else:
             words.append(token)
@@ -461,9 +462,9 @@ def recognise(path: str):
                 return None, f"{name}: the {kind} handoff frontmatter lacks " + ", ".join(
                     k for k in keys if k not in fields)
         return None, None
-    if first.startswith("# Specifications"):
+    if first.startswith("#") and "Specifications" in first:
         return "specs", None
-    if first.startswith("# Verification contract"):
+    if first.startswith("#") and "Verification contract" in first:
         return "contract", None
     return None, None
 
