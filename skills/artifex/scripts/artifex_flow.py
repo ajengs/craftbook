@@ -270,6 +270,9 @@ def on_dispatched(state, ev):
         "attempts": req["attempts"], "round": ev.get("round"), "head": ev.get("head"),
         "started": False, "dispatched_at": ev.get("ts"),
     }
+    ver = state["handoffs"].get("verification")
+    if phase in ("P5", "P6") and ver is not None:
+        state["active"][ev["run_id"]]["verification_sha"] = ver["sha256"]
     state["seq"][phase] = state["seq"].get(phase, 0) + 1
     state["handled_threads"].extend(t for t in req["threads"] if t not in state["handled_threads"])
     if phase == "P4":
@@ -321,6 +324,7 @@ def on_complete(state, ev):
             raise FlowError("cannot complete: " + "; ".join(problems))
         req = state["requests"].pop("P3")
         state["seq"]["P3"] = state["seq"].get("P3", 0) + 1
+        state["handled_threads"].extend(t for t in req["threads"] if t not in state["handled_threads"])
         run = {"phase": "P3", "origins": req["origins"], "inputs": req["inputs"], "threads": req["threads"]}
     else:
         held = next((h for h in state["halt"] if h.get("run_id") == env["run_id"]
@@ -477,9 +481,27 @@ def _verification_tests_pushed(state, env):
         state["review"]["passed_head"] = pushed
 
 
+def _obsolete(state, run) -> bool:
+    """The run checked a verification handoff that has since been replaced."""
+    sha = run.get("verification_sha")
+    return sha is not None and sha != state["handoffs"]["verification"]["sha256"]
+
+
+def _obsolete_result(state, run, env):
+    if is_current(state, env.get("head")):
+        _verification_tests_pushed(state, env)
+    return [checkpoint(f"{run['phase'].lower()}_obsolete",
+                       f"{env['run_id']} ran against an older verification handoff; its {env['status']} result "
+                       f"doesn't count; {run['phase']} " + ("runs again on the current one" if run["phase"] == "P5"
+                       else "waits for the user's trigger on the current one"), post=False,
+                       artifacts=env.get("artifacts", []))]
+
+
 def p5_result(state, run, env, ev):
     status = env["status"]
     artifacts = env.get("artifacts", [])
+    if status in ("completed", "changes_requested") and _obsolete(state, run):
+        return _obsolete_result(state, run, env)
     stale = not is_current(state, env["head"])
     if not stale:
         _verification_tests_pushed(state, env)
@@ -514,6 +536,9 @@ def p5_result(state, run, env, ev):
 
 
 def p6_result(state, run, env, ev):
+    if env["status"] in ("completed", "changes_requested") and _obsolete(state, run):
+        # P6 is the user's manual check: they trigger it again on the new contract.
+        return _obsolete_result(state, run, env)
     if env["status"] == "completed" and is_current(state, env["head"]):
         _verification_tests_pushed(state, env)
         state["p6"]["passed_head"] = state["pr"]["head"]
@@ -722,12 +747,15 @@ def _sibling_writer(state, siblings):
     return None
 
 
-def _verification_blocker(state, active_phases, siblings=()):
+def _verification_blocker(state, active_phases, siblings=(), phase="P5"):
     queued = set(state["requests"])
     if "P3" in active_phases or "P3" in queued:
         return "waits for the implementation sub agent"
     if "P4" in active_phases or "P4" in queued:
         return "waits for the review round"
+    other = "P6" if phase == "P5" else "P5"
+    if other in active_phases:
+        return f"waits for {other}, which may be committing tests on the branch"
     return _sibling_writer(state, siblings)
 
 
@@ -777,7 +805,7 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
             reason = "P6 waits for a passing review on the current head"
         elif auto and not is_current(state, state["p5"]["passed_head"]):
             reason = "P6 waits for P5 to pass on the current head"
-        reason = reason or _verification_blocker(state, active_phases, siblings) \
+        reason = reason or _verification_blocker(state, active_phases, siblings, "P6") \
             or _changed(state, ["implementation", "verification"], hash_of)
         actions.append(_wait("P6", reason) if reason else spawn_action(state, "P6"))
 
@@ -912,8 +940,11 @@ def check_shape(state: dict, run: dict, env: dict, mdir: Path) -> list:
         return problems + [f"status {status!r} is not valid for {phase}"]
     worked = status in ("completed", "changes_requested")
     head = env.get("head")
-    if worked and not (isinstance(head, str) and SHA_RE.match(head)):
-        problems.append("head must be the full commit SHA")
+    if (worked or env.get("pushed_head")) and not (isinstance(head, str) and SHA_RE.match(head)):
+        problems.append("head must be the full commit SHA" + ("" if worked else
+                        "; a result with pushed_head names the head its tests ran on"))
+    elif phase != "P3" and env.get("pushed_head") and not worked and head not in state["pr"]["heads"]:
+        problems.append(f"head {head[:12]} is not a head this PR has had")
     if status == "needs_decision" and not env.get("question"):
         problems.append("needs_decision requires a question")
     if phase == "P3" and status == "completed" and not env.get("pr_url"):

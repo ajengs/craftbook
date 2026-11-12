@@ -369,6 +369,46 @@ class VerificationLoopTests(unittest.TestCase):
         self.assertIsNone(sim.state["p6"]["passed_head"])
         self.assertIn("P6 trigger", sim.step()[0]["reason"])
 
+    def test_running_p5_on_a_replaced_handoff_does_not_pass_the_new_one(self):
+        sim = Sim()
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        sim.verification(auto=("V1",), sha256="w" * 64)
+        sim.result(p5["run_id"], head=sha(1), scenarios={"V1": "pass"})
+        self.assertIn("p5_obsolete", sim.kinds())
+        self.assertIsNone(sim.state["p5"]["passed_head"])
+        rerun, = sim.spawned()
+        self.assertEqual(rerun["phase"], "P5")
+        sim.result(rerun["run_id"], head=sha(1), scenarios={"V1": "pass"})
+        self.assertEqual(sim.state["p5"]["passed_head"], sha(1))
+
+    def test_running_p6_on_a_replaced_handoff_waits_for_a_new_trigger(self):
+        sim = Sim(auto=(), manual=("M1",))
+        sim.to_review_pass()
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        sim.verification(auto=(), manual=("M1",), sha256="w" * 64)
+        sim.result(p6["run_id"], head=sha(1), scenarios={"M1": "pass"})
+        self.assertIn("p6_obsolete", sim.kinds())
+        self.assertIsNone(sim.state["p6"]["passed_head"])
+        self.assertIn("P6 trigger", sim.step()[0]["reason"])
+        sim.apply({"type": "trigger_p6"})
+        self.assertEqual(sim.spawned()[0]["phase"], "P6")
+
+    def test_p5_reset_waits_while_p6_is_running(self):
+        sim = Sim(auto=("V1",), manual=("M1",))
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        sim.result(p5["run_id"], head=sha(1), scenarios={"V1": "pass"})
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        sim.verification(auto=("V1", "V2"), manual=("M1",), sha256="w" * 64)
+        wait, = sim.step()
+        self.assertEqual((wait["action"], wait["phase"]), ("wait", "P5"))
+        self.assertIn("P6", wait["reason"])
+        sim.result(p6["run_id"], head=sha(1), scenarios={"M1": "pass"})
+        self.assertEqual(sim.spawned()[0]["phase"], "P5")
+
     def test_rerecording_the_same_verification_handoff_keeps_passes(self):
         sim = Sim()
         sim.to_review_pass()
@@ -854,6 +894,19 @@ class CliTests(unittest.TestCase):
             self.assertTrue(any(expected in p for p in problems), (name, problems))
             self.assertEqual(out["actions"][0]["action"], "halted", name)
 
+    def test_blocked_p5_with_a_push_but_no_head_is_rejected_not_crashed(self):
+        run_id, head = self.to_p5()
+        pushed = self.repo.commit("test_feature.py", "assert True\n", "test")
+        git(self.repo.work, "push", "-q", "origin", "feature")
+        out = self.cli("result", self.result_file(run_id, phase="P5", status="blocked", pushed_head=pushed,
+                                               summary="pushed tests; staging is down"))
+        problems = out["checkpoints"][0]["problems"]
+        self.assertTrue(any("names the head its tests ran on" in p for p in problems), problems)
+        self.assertEqual(out["actions"][0]["action"], "halted")
+        out = self.cli("result", self.result_file(run_id, phase="P5", status="blocked", head=head,
+                                               pushed_head=pushed, summary="pushed tests; staging is down"))
+        self.assertEqual(out["actions"][0]["reasons"][-1]["kind"], "blocked")
+
     def test_failing_p5_push_with_internal_codes_is_rejected(self):
         run_id, head = self.to_p5()
         pushed = self.repo.commit("test_feature.py", "assert False\n", "test for SPEC-3")
@@ -980,6 +1033,15 @@ class UmbrellaCompleteTests(unittest.TestCase):
         sim.result(p4["run_id"], "changes_requested", head=sha(1))
         self.complete(sim, "M1-P3-2", sha(2), queued=True, push={"class": "code"})
         self.assertEqual(sim.spawned()[0]["round"], 2)
+
+    def test_manually_completed_thread_version_is_not_queued_again(self):
+        sim = Sim()
+        sim.to_review_pass()
+        sim.apply({"type": "poll", "kind": "threads", "ids": ["t1:c1"]})
+        self.complete(sim, "M1-P3-2", sha(1), queued=True, push={"class": "none"})
+        sim.apply({"type": "poll", "kind": "threads", "ids": ["t1:c1"]})
+        self.assertEqual(sim.kinds()[-1], "threads_none")
+        self.assertNotIn("P3", sim.state["requests"])
 
     def test_queued_completion_needs_a_queued_p3_and_no_running_one(self):
         sim = Sim()
