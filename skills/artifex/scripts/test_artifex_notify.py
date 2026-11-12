@@ -260,6 +260,26 @@ class NotifierTests(unittest.TestCase):
             session.record(event)
         self.assertEqual(keys, ["halt/result_rejected/run-1", "halt/result_rejected/run-1"])
 
+    def test_non_run_halt_reentry_gets_a_new_episode_key(self):
+        mdir = self.root / "milestones" / "alpha"
+        session = flow.Session(mdir, must_exist=False)
+        session.record({"type": "init", "milestone": "alpha", "ticket": "TASK-1"})
+        keys = []
+        with mock.patch.object(notify, "send_event", side_effect=lambda _root, _ticket, _milestone, notice:
+                               keys.append(notice["key"]) or "sent"):
+            session.record({"type": "handoff", "kind": "implementation", "path": "handoff.md",
+                            "sha256": "h1", "fields": {"branch": "work", "workdir": "D:/work",
+                            "target": "main", "depends_on": []}, "target_ahead": {"commits": 1}})
+            self.assertTrue(session.state["halt"])
+            session.record({"type": "resume", "note": "Resolved first target episode"})
+            self.assertFalse(session.state["halt"])
+            session.record({"type": "context", "fields": {"target": "main"},
+                            "target_ahead": {"commits": 2}})
+        self.assertEqual(len(keys), 2)
+        self.assertTrue(keys[0].startswith("halt/target_unpushed/"))
+        self.assertTrue(keys[1].startswith("halt/target_unpushed/"))
+        self.assertNotEqual(keys[0], keys[1])
+
 
 if __name__ == "__main__":
     unittest.main()
