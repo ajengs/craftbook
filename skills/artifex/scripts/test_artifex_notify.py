@@ -91,6 +91,25 @@ class NotifierTests(unittest.TestCase):
         self.assertNotIn("other", body)
         self.assertIn("token=[redacted]", body)
 
+    def test_configured_credentials_are_redacted_and_rejected_from_keys(self):
+        sender = self.sender()
+        token = "secret"
+        key = "canary"
+        self.assertEqual(sender.send(self.event(key="issue/" + token,
+                                                summary="credential " + key)), "invalid")
+        self.assertEqual(sender.send(self.event(key="safe", summary="credential " + key)), "sent")
+        self.assertNotIn(key, self.sent[0][1]["text"])
+        db = sqlite3.connect(self.root / "notifications.sqlite3")
+        try:
+            self.assertNotIn(token, repr(db.execute("select event_key from events").fetchall()))
+        finally:
+            db.close()
+
+    def test_message_size_bound_handles_large_fixed_and_multibyte_fields(self):
+        text = notify.format_message({"kind": "started", "task": "界" * 5000,
+                                      "summary": "é" * 5000}, "TASK-1", "alpha")
+        self.assertLessEqual(len(text.encode("utf-8")), 4096)
+
     def test_attempt_spacing_and_rolling_cap(self):
         sender = self.sender(lambda *_: (503, {}, b""))
         self.assertEqual(sender.send(self.event("task-a")), "failed")
@@ -211,6 +230,35 @@ class NotifierTests(unittest.TestCase):
         self.assertEqual(session.state["active"]["run-start-1"]["started"], True)
         self.assertIn('"type": "started"', (mdir / "run.jsonl").read_text(encoding="utf-8"))
         self.assertNotIn("canary", error_output.getvalue())
+
+    def test_dry_run_suppresses_committed_event_notification(self):
+        mdir = self.root / "milestones" / "alpha"
+        session = flow.Session(mdir, must_exist=False)
+        session.record({"type": "init", "milestone": "alpha", "ticket": "TASK-1"})
+        session.record({"type": "dispatched", "run_id": "run-start-1", "phase": "implementation"})
+        with mock.patch.object(notify, "send_event") as send:
+            with mock.patch.object(flow, "Session", return_value=session):
+                with mock.patch.object(flow, "load_siblings", return_value=[]):
+                    flow.main(["event", "started", "--run-id", "run-start-1", "--dir", str(mdir), "--dry-run"])
+            send.assert_not_called()
+
+    def test_repeated_rejected_result_uses_same_blocker_key(self):
+        mdir = self.root / "milestones" / "alpha"
+        session = flow.Session(mdir, must_exist=False)
+        session.record({"type": "init", "milestone": "alpha", "ticket": "TASK-1"})
+        session.record({"type": "dispatched", "run_id": "run-1", "phase": "P3"})
+        session.record({"type": "started", "run_id": "run-1"})
+        event = {"type": "result", "result": {"run_id": "run-1", "phase": "P3", "status": "completed"},
+                 "problems": ["missing head"]}
+        keys = []
+        def capture(root, ticket, milestone, notice):
+            if notice["kind"] == "blocker":
+                keys.append(notice["key"])
+            return "sent"
+        with mock.patch.object(notify, "send_event", side_effect=capture):
+            session.record(event)
+            session.record(event)
+        self.assertEqual(keys, ["halt/result_rejected/run-1", "halt/result_rejected/run-1"])
 
 
 if __name__ == "__main__":
