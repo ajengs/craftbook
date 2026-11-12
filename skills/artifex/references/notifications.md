@@ -2,15 +2,16 @@
 
 Notifications are optional and best effort. Set `ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL` in the process environment that runs the router. The value must be a Google Chat incoming webhook URL on `chat.googleapis.com`; do not put it in an argument, repository file, `state.json`, or a transcript. Unset the variable to disable notifications. Disabled calls do not create a delivery database.
 
-The router sends lifecycle notices only after it commits a confirmed `started` event or a validated terminal result. Spawn dispatches, dry runs, `next`, reads, and replay do not send. A blocked or decision-needed terminal result produces its outcome notice and a separate blocker notice. Existing history is not backfilled. P1, P2, and D1 are not observed by the router; the umbrella sends their explicit lifecycle notices.
+The router sends lifecycle notices only after it commits a confirmed `started` event or a validated terminal result. Spawn dispatches, dry runs, `next`, reads, and replay do not send. A blocked or decision-needed terminal result produces its outcome notice and a separate blocker notice. Existing history is not backfilled. Planning sessions are not observed by the router; the umbrella sends their explicit lifecycle notices.
 
 The umbrella can send a planning, approval, or blocker notice explicitly. The key is the semantic event identity and must stay the same when the same request is repeated. Approval keys should include artifact identity and revision; blocker keys should identify the issue episode. Do not use timestamps or changing prose as keys.
 
 ```powershell
 $env:ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL = '<Google Chat incoming webhook URL>'
-python skills/artifex/scripts/artifex_notify.py --dir 'D:/Notes/Craftbook/ART-20' --ticket ART-20 --milestone M1 --key 'p2/run-abc/started' --kind started --task 'P2 analysis' --summary 'Analysis session started'
-python skills/artifex/scripts/artifex_notify.py --dir 'D:/Notes/Craftbook/ART-20' --ticket ART-20 --milestone M1 --key 'approval/specs-r3' --kind approval-needed --task 'specs approval' --summary 'Review and approve specs revision r3' --source 'https://example.invalid/specs'
-python skills/artifex/scripts/artifex_notify.py --dir 'D:/Notes/Craftbook/ART-20' --ticket ART-20 --milestone M1 --key 'blocker/database-access/episode-1' --kind blocker --task 'P2 analysis' --summary 'Database access is blocked; provide a test account'
+$initiative = '<initiative artifact folder>'
+python skills/artifex/scripts/artifex_notify.py --dir $initiative --ticket TICKET --milestone milestone-name --key 'planning-session/run-abc/started' --kind started --task 'planning analysis' --summary 'Analysis session started'
+python skills/artifex/scripts/artifex_notify.py --dir $initiative --ticket TICKET --milestone milestone-name --key 'approval/specifications/revision-3' --kind approval-needed --task 'specification approval' --summary 'Review and approve specification revision 3' --source 'https://example.invalid/specifications'
+python skills/artifex/scripts/artifex_notify.py --dir $initiative --ticket TICKET --milestone milestone-name --key 'blocker/database-access/episode-1' --kind blocker --task 'planning analysis' --summary 'Database access is blocked; provide a test account'
 Remove-Item Env:ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL
 ```
 

@@ -42,7 +42,7 @@ class NotifierTests(unittest.TestCase):
         self.temp.cleanup()
 
     def sender(self, transport=None):
-        return notify.Notifier(self.root, "ART-1", "M1", env={"ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL":
+        return notify.Notifier(self.root, "TASK-1", "alpha", env={"ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL":
                             "https://chat.googleapis.com/v1/spaces/x/messages?key=canary&token=secret"},
                                clock=self.clock, sleep=self.clock.sleep,
                                transport=transport or self.transport)
@@ -55,7 +55,7 @@ class NotifierTests(unittest.TestCase):
         return {"key": key, "kind": kind, "task": "implementation", "summary": summary}
 
     def test_disabled_does_not_create_database(self):
-        sender = notify.Notifier(self.root, "ART-1", "M1", env={}, clock=self.clock)
+        sender = notify.Notifier(self.root, "TASK-1", "alpha", env={}, clock=self.clock)
         self.assertEqual(sender.send(self.event()), "disabled")
         self.assertFalse((self.root / "notifications.sqlite3").exists())
 
@@ -78,7 +78,7 @@ class NotifierTests(unittest.TestCase):
         self.assertEqual(sender.send(self.event()), "duplicate")
         self.assertEqual(len(self.sent), 1)
         body = self.sent[0][1]["text"]
-        self.assertIn("ART-1", body)
+        self.assertIn("TASK-1", body)
         self.assertIn("UTC", body)
         self.assertIn("+07:00", body)
         self.assertNotIn("secret", body)
@@ -86,7 +86,7 @@ class NotifierTests(unittest.TestCase):
 
     def test_message_redacts_canaries_in_supplied_fields(self):
         body = notify.format_message(self.event(summary="token=canary key=other"),
-                                     "ART-1", "M1")
+                                     "TASK-1", "alpha")
         self.assertNotIn("canary", body)
         self.assertNotIn("other", body)
         self.assertIn("token=[redacted]", body)
@@ -115,7 +115,7 @@ class NotifierTests(unittest.TestCase):
 
     def test_invalid_destination_does_not_reach_transport(self):
         called = []
-        sender = notify.Notifier(self.root, "ART-1", "M1", env={
+        sender = notify.Notifier(self.root, "TASK-1", "alpha", env={
             "ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL": "https://example.test/?token=secret"},
             clock=self.clock, transport=lambda *a: called.append(a))
         self.assertEqual(sender.send(self.event()), "invalid")
@@ -125,7 +125,7 @@ class NotifierTests(unittest.TestCase):
         blocked = self.root / "not-a-directory"
         blocked.write_text("occupied", encoding="utf-8")
         called = []
-        sender = notify.Notifier(blocked / "initiative", "ART-1", "M1", env={
+        sender = notify.Notifier(blocked / "initiative", "TASK-1", "alpha", env={
             "ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL":
             "https://chat.googleapis.com/v1/spaces/x/messages?key=canary&token=secret"},
             transport=lambda *args: called.append(args))
@@ -187,7 +187,7 @@ class NotifierTests(unittest.TestCase):
         self.assertEqual(hits, ["/hook"])
 
     def test_router_adapter_only_sees_committed_transitions(self):
-        mdir = self.root / "milestones" / "M1"
+        mdir = self.root / "milestones" / "alpha"
         session = flow.Session(mdir, must_exist=False)
         session.record({"type": "init", "milestone": "alpha", "ticket": "TASK-1"})
         def committed(*_):

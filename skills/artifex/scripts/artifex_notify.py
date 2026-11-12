@@ -230,19 +230,17 @@ def notify_committed(session, event: dict, checkpoints: list) -> None:
     """Adapt only durable router transitions into notification events."""
     state = session.state
     ticket, milestone = state.get("ticket", "unknown"), state.get("milestone", "unknown")
+    from artifex_flow import PHASES
+
     notice = None
     if event.get("type") == "started":
         run = state.get("active", {}).get(event.get("run_id"), {})
-        phase = run.get("phase", "task")
-        task = {"P3": "implementation", "P4": "review", "P5": "auto verification",
-                "P6": "manual verification"}.get(phase, "workflow")
+        task = PHASES.get(run.get("phase"), {}).get("name", "workflow")
         notice = {"key": f"{event['run_id']}/started", "kind": "started",
                   "task": task, "summary": "Task started"}
     elif event.get("type") == "result" and not any(cp.get("kind") == "result_rejected" for cp in checkpoints):
         result = event["result"]
-        phase = result.get("phase", "task")
-        task = {"P3": "implementation", "P4": "review", "P5": "auto verification",
-                "P6": "manual verification"}.get(phase, "workflow")
+        task = PHASES.get(result.get("phase"), {}).get("name", "workflow")
         notice = {"key": f"{result['run_id']}/finished", "kind": "finished",
                   "task": task, "summary": f"Outcome: {str(result['status']).replace('_', ' ')}"}
     if notice:
