@@ -8,7 +8,8 @@ router. STATE.md exists only when the user asks for one: `render` writes it
 from this file and the routers.
 
 Commands (each takes --dir <initiative folder>):
-    init     create state.json
+    init     create state.json from the invocation: init --mode <m> --mode-source explicit|recommended --request-file <f>
+    route    read the invocation and print its mode, start and next commands (no write)
     set      replace fields of a section:      set status phase=P2 "next=Approve the specs"
     upsert   add or update one row of a table: upsert artifacts specs-M1 path=milestones/M1/specs.md sha256=...
     remove   drop a row:                       remove blockers gh-auth
@@ -33,6 +34,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import shlex
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,7 +45,7 @@ import artifex_flow  # noqa: E402
 
 SCHEMA = 1
 SECTIONS = {
-    "initiative": ("ticket", "title", "track", "request"),
+    "initiative": ("ticket", "title", "mode", "mode_source", "request"),
     "status": ("phase", "status", "next"),
     "workspace": ("workdir", "workdir_kind", "work_folder", "project_folder", "artifact_folder", "source"),
     "consent": ("status", "question", "response", "date", "source", "scope", "umbrella_route"),
@@ -51,7 +54,8 @@ SECTIONS = {
 TABLES = {
     "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "status"),
     "milestones": ("scope", "status", "session", "folder", "depends_on", "link"),
-    "artifacts": ("path", "revision", "sha256", "decision", "date", "affects", "surface", "url", "host", "fallback"),
+    "artifacts": ("path", "revision", "sha256", "decision", "date", "affects", "surface", "url", "host", "fallback",
+                  "source"),
     "blockers": ("text", "since", "owner"),
     "polls": ("pr", "ci", "threads", "schedule", "last"),
 }
@@ -145,8 +149,8 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def new_state(ticket: str, title: str | None, track: str, request: str | None = None) -> dict:
-    initiative = {"ticket": ticket, "title": title, "track": track}
+def new_state(ticket: str, title: str | None, mode: str, mode_source: str, request: str | None = None) -> dict:
+    initiative = {"ticket": ticket, "title": title, "mode": mode, "mode_source": mode_source}
     if request:
         initiative["request"] = request
     return {"schema": SCHEMA, "revision": 0, "updated": None,
@@ -203,19 +207,40 @@ class Store:
         return {"revision": state["revision"], "path": str(self.path.resolve())}
 
 
+def effective_mode(state: dict) -> str:
+    initiative = state["initiative"]
+    return initiative.get("mode") or ("defect" if initiative.get("track") == "bug" else "project")
+
+
 def cmd_init(store: Store, args):
     if store.path.exists():
         raise StateError(f"{store.path} already exists")
-    return store.save(new_state(args.ticket, args.title, args.track, verbatim(args, "request")))
+    request = verbatim(args, "request", True)
+    parsed = parse_request(request, request_overrides(args))
+    mode = parsed["mode"]
+    contract = check_contract(mode, parsed)
+    if not contract["ok"]:
+        raise StateError(contract["problem"])
+    if not parsed["ticket"]:
+        raise StateError("no ticket in the request; name it like ABC-123 or give --ticket")
+    state = new_state(parsed["ticket"], args.title, mode, args.mode_source, request)
+    register_scope(state, mode, parsed, contract)
+    out = store.save(state)
+    return {**out, "mode": mode, "mode_source": args.mode_source, "contract": contract["result"],
+            "next": next_commands(store.folder, mode, args.mode_source, parsed, contract, args)}
 
 
 def cmd_set(store: Store, args):
     if args.section not in SECTIONS:
         raise StateError(f"unknown section {args.section!r}; sections: {', '.join(SECTIONS)}")
+    if args.section == "initiative" and any(p.partition("=")[0].rstrip(":") == "track" for p in args.pairs):
+        raise StateError("`track` is retired; an initiative's mode is fixed by `init`")
     fields = parse_pairs(args.pairs, SECTIONS[args.section])
     if args.section in ("consent", "delivery") and {"question", "response", "status"} & set(fields):
         raise StateError(f"record {args.section} with the `{args.section}` command, which keeps the question "
                          "and reply verbatim")
+    if args.section == "initiative" and {"mode", "mode_source"} & set(fields):
+        raise StateError("an initiative's mode is fixed by `init`; recreate the initiative to change it")
     if args.section == "status" and fields.get("status") not in (None, *STATUSES):
         raise StateError(f"status must be one of: {', '.join(STATUSES)}")
     state = store.load()
@@ -307,6 +332,278 @@ def verbatim(args, name: str, required: bool = False):
     return inline
 
 
+MODES = {
+    "project": {"start": "P1", "contract": "a non-empty request"},
+    "milestone": {"start": "P2", "contract": "a scope in the request: a file, a link or a description"},
+    "defect": {"start": "D1", "contract": "a non-empty request"},
+    "implementation": {"start": "router when the four artifacts are supplied, otherwise P2 (short)",
+                       "contract": "specs, verification contract, implementation handoff and verification handoff, "
+                                   "or any context for a short P2"},
+}
+MODE_ALIASES = {"bug": "defect"}
+ARTIFACT_LABELS = {"specs": "specs", "contract": "verification contract", "handoff": "implementation handoff",
+                   "verification_handoff": "verification handoff"}
+ARTIFACT_DOCS = {"specs": "specs", "contract": "verification-contract", "handoff": "implementation-handoff",
+                 "verification_handoff": "verification-handoff"}
+REQUEST_FLAGS = {"--mode": "mode", "--ticket": "ticket", "--milestone": "milestone", "--scope": "scope",
+                 "--specs": "specs", "--contract": "contract", "--handoff": "handoff",
+                 "--verification-handoff": "verification_handoff"}
+TICKET_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
+WEB_LINK = re.compile(r"^https?://", re.IGNORECASE)
+DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+FILE_EXTENSION = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,7}$")
+BACKSLASH = ""
+
+
+def canonical_mode(value: str) -> str:
+    mode = MODE_ALIASES.get(value.lower(), value.lower())
+    if mode not in MODES:
+        raise StateError(f"unknown mode {value!r}; modes: {', '.join(MODES)} (bug is accepted for defect)")
+    return mode
+
+
+def tokenize(text: str) -> list:
+    try:
+        return [t.replace(BACKSLASH, "\\") for t in shlex.split(text.replace("\\", BACKSLASH))]
+    except ValueError:
+        return text.split()
+
+
+def parse_request(text: str, overrides: dict | None = None) -> dict:
+    """What the invocation says: mode, ticket, existing files, links and the remaining free text."""
+    tokens = tokenize(text)
+    if tokens and tokens[0].lower() in ("/artifex", "artifex"):
+        tokens = tokens[1:]
+    leading = tokens[0] if tokens and tokens[0].lower() in (*MODES, *MODE_ALIASES) else None
+    flags, rest, i = {}, [], 0
+    while i < len(tokens):
+        name, eq, value = tokens[i].partition("=")
+        if name in REQUEST_FLAGS:
+            if not eq:
+                i += 1
+                if i >= len(tokens):
+                    raise StateError(f"{name} needs a value")
+                value = tokens[i]
+            flags[REQUEST_FLAGS[name]] = value
+        else:
+            rest.append(tokens[i])
+        i += 1
+    if leading is not None:
+        rest.pop(0)
+    flags.update({k: v for k, v in (overrides or {}).items() if v})
+    seen = {}
+    for label, value in (("--mode", flags.get("mode")), ("the leading word", leading)):
+        if value:
+            seen.setdefault(canonical_mode(value), []).append(f"{label} {value}")
+    if len(seen) > 1:
+        raise StateError("conflicting modes: " + " but ".join(v[0] for v in seen.values()))
+    ticket = flags.get("ticket")
+    if not ticket:
+        ticket = next((t for t in rest if TICKET_ID.match(t)), None)
+        if ticket:
+            rest.remove(ticket)
+    files, links, words = [], [], []
+
+    def place(token: str) -> None:
+        if WEB_LINK.match(token):
+            links.append(token)
+        elif Path(token).is_file():
+            files.append(str(Path(token).resolve()))
+        elif Path(token).is_dir():
+            words.append(token)
+        elif DRIVE_PATH.match(token) or (("/" in token or "\\" in token) and FILE_EXTENSION.search(token)):
+            raise StateError(f"path not found: {token}")
+        else:
+            words.append(token)
+
+    for token in rest:
+        place(token)
+    if flags.get("scope"):
+        words.clear()
+        place(flags["scope"])
+    named = {}
+    for key in ARTIFACT_LABELS:
+        if flags.get(key):
+            if not Path(flags[key]).is_file():
+                raise StateError(f"path not found: {flags[key]}")
+            named[key] = str(Path(flags[key]).resolve())
+            if named[key] not in files:
+                files.append(named[key])
+    return {"mode": next(iter(seen), None), "ticket": ticket, "milestone": flags.get("milestone"),
+            "files": files, "links": links, "text": " ".join(words), "named": named}
+
+
+def request_overrides(args) -> dict:
+    keys = ("mode", "ticket", "milestone", "scope", "specs", "contract", "handoff", "verification_handoff")
+    return {k: getattr(args, k, None) for k in keys}
+
+
+def recognise(path: str):
+    """(artifact kind or None, problem or None) for a file in an implementation request."""
+    text = Path(path).read_bytes()[:65536].decode("utf-8-sig", errors="replace")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    first = lines[0] if lines else ""
+    if first == "---":
+        fields = artifex_flow.parse_frontmatter(text)
+        name = Path(path).name
+        if {"auto", "manual"} <= set(fields):
+            return "verification_handoff", None
+        if {"branch", "workdir", "target"} <= set(fields):
+            return "handoff", None
+        if not fields:
+            return None, f"{name}: the handoff frontmatter is empty; it needs branch, workdir and target (TBD allowed)"
+        for kind, keys in (("implementation", ("branch", "workdir", "target")), ("verification", ("auto", "manual"))):
+            if set(keys) & set(fields):
+                return None, f"{name}: the {kind} handoff frontmatter lacks " + ", ".join(
+                    k for k in keys if k not in fields)
+        return None, None
+    if first.startswith("# Specifications"):
+        return "specs", None
+    if first.startswith("# Verification contract"):
+        return "contract", None
+    return None, None
+
+
+def classify_files(files: list, named: dict):
+    claims, others, problems = {k: [] for k in ARTIFACT_LABELS}, [], []
+    by_path = {}
+    for kind, path in named.items():
+        if path in by_path:
+            problems.append(f"{Path(path).name} is named as both {ARTIFACT_LABELS[by_path[path]]} "
+                            f"and {ARTIFACT_LABELS[kind]}")
+        by_path[path] = kind
+    for path in files:
+        if path in by_path:
+            kind, problem = by_path[path], None
+            if kind == "handoff":
+                fields = artifex_flow.parse_frontmatter(Path(path).read_text(encoding="utf-8", errors="replace"))
+                missing = [k for k in ("branch", "workdir", "target") if k not in fields]
+                if missing:
+                    problem = f"{Path(path).name}: the handoff frontmatter lacks " + ", ".join(missing)
+        else:
+            kind, problem = recognise(path)
+        if problem:
+            problems.append(problem)
+        elif kind:
+            claims[kind].append(path)
+        else:
+            others.append(path)
+    for kind, paths in claims.items():
+        if len(paths) > 1:
+            problems.append(f"{ARTIFACT_LABELS[kind]} recognised twice: " + " and ".join(Path(p).name for p in paths))
+    return claims, others, problems
+
+
+def check_contract(mode: str, parsed: dict) -> dict:
+    """The entry contract of a mode. One function, so `route` and `init` can't disagree."""
+    files, links, text = parsed["files"], parsed["links"], parsed["text"]
+    out = {"mode": mode, "ok": False, "result": "failed", "problem": None, "artifacts": {}, "context": [],
+           "start": MODES[mode]["start"]}
+    if mode in ("project", "defect"):
+        if parsed["ticket"] or files or links or text:
+            out.update(ok=True, result="request given")
+        else:
+            out["problem"] = f"{mode} mode needs a request: a ticket, a file, a link or a description"
+    elif mode == "milestone":
+        if files or links or text:
+            out.update(ok=True, result="scope given", context=[*files, *links])
+        else:
+            out["problem"] = "milestone mode needs a scope: a file, a link or a description in the request"
+    else:
+        claims, others, problems = classify_files(files, parsed["named"])
+        out["artifacts"] = {k: v[0] for k, v in claims.items() if v}
+        out["context"] = [*others, *links]
+        if problems:
+            out["problem"] = "; ".join(problems)
+        elif len(out["artifacts"]) == len(ARTIFACT_LABELS):
+            out.update(ok=True, result="artifacts ready", start="router")
+        elif text or links or files:
+            out.update(ok=True, result="short P2", start="P2")
+        else:
+            out["problem"] = ("implementation mode needs the four artifacts (specs, verification contract, "
+                              "implementation handoff, verification handoff) or context for a short P2")
+    return out
+
+
+def milestone_id(parsed: dict) -> str:
+    return parsed["milestone"] or "M1"
+
+
+def register_scope(state: dict, mode: str, parsed: dict, contract: dict) -> None:
+    if mode not in ("milestone", "implementation"):
+        return
+    mid, day = milestone_id(parsed), now()[:10]
+    context = contract["context"]
+    link = context[0] if context else None
+    row = {"status": "selected", "link": link, "scope": parsed["text"] or None}
+    state["milestones"][mid] = {k: v for k, v in row.items() if v}
+    if mode == "milestone":
+        return
+    ready = contract["result"] == "artifacts ready"
+    for kind, path in contract["artifacts"].items():
+        entry = {"path": path, "sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+                 "decision": "supplied", "date": day}
+        if ready and kind in ("specs", "contract"):
+            entry.update(decision="approved", surface="invocation",
+                         source="the user's Artifex invocation, which supplied it (recorded in initiative.request)")
+        state["artifacts"][f"{ARTIFACT_DOCS[kind]}-{mid}"] = entry
+    for n, item in enumerate(context, 1):
+        state["artifacts"][f"context-{mid}-{n}"] = {("path" if item in parsed["files"] else "url"): item,
+                                                      "decision": "supplied", "date": day}
+
+
+def next_commands(folder: Path, mode: str, source: str, parsed: dict, contract: dict, args) -> list:
+    script = SKILL_DIR / "scripts" / "artifex_state.py"
+    cmd = f'python "{script}" --dir "{folder.resolve()}"'
+    mid = milestone_id(parsed)
+    request = getattr(args, "request_file", None)
+    init = f"{cmd} init --mode {mode} --mode-source {source}" + (
+        f' --request-file "{request}"' if request else " --request <the invocation>")
+    for key, value in request_overrides(args).items():
+        if value and key != "mode":
+            init += f' --{key.replace("_", "-")} "{value}"'
+    steps = [init, "Ask the consent and delivery questions; record them with `consent` and `delivery`."]
+    if contract["result"] == "artifacts ready":
+        flow = f'python "{SKILL_DIR / "scripts" / "artifex_flow.py"}"'
+        mdir = (folder / "milestones" / mid).resolve()
+        arts = contract["artifacts"]
+        steps += [f'{flow} init --dir "{mdir}" --milestone {mid} --ticket {parsed["ticket"] or "<ticket>"} '
+                  "--umbrella-session <id>",
+                  f'{flow} handoff --dir "{mdir}" --kind implementation "{arts["handoff"]}"',
+                  f'{flow} handoff --dir "{mdir}" --kind verification "{arts["verification_handoff"]}"']
+    elif mode == "project":
+        steps.append(f"{cmd} brief P1")
+    elif mode == "defect":
+        steps.append(f"{cmd} brief D1")
+    else:
+        steps.append(f"{cmd} brief P2 --milestone {mid}" + (" --short" if mode == "implementation" else ""))
+    return steps
+
+
+def cmd_route(store: Store, args):
+    if store.path.exists():
+        state = store.load()
+        mode = effective_mode(state)
+        return {"stored": True, "mode": mode, "mode_source": state["initiative"].get("mode_source"),
+                "start": MODES[mode]["start"] if mode in MODES else None,
+                "note": "this initiative already exists; its stored mode applies and the request is not read"}
+    parsed = parse_request(verbatim(args, "request", True), request_overrides(args))
+    found = {"ticket": parsed["ticket"], "files": parsed["files"], "links": parsed["links"], "text": parsed["text"]}
+    if not parsed["mode"]:
+        return {"needs_recommendation": True, **found,
+                "modes": [{"mode": m, "start": v["start"], "contract": v["contract"]} for m, v in MODES.items()],
+                "next": ["Recommend one mode with reasons; start nothing until the user approves it, then run "
+                         "`init --mode <mode> --mode-source recommended --request-file <f>` and the printed start."]}
+    mode = parsed["mode"]
+    contract = check_contract(mode, parsed)
+    out = {"mode": mode, "mode_source": "explicit", "start": contract["start"], **found,
+           "milestone": milestone_id(parsed) if mode in ("milestone", "implementation") else None,
+           "contract": {"ok": contract["ok"], "result": contract["result"], "problem": contract["problem"],
+                        "artifacts": contract["artifacts"], "context": contract["context"]}}
+    out["next"] = next_commands(store.folder, mode, "explicit", parsed, contract, args) if contract["ok"] else []
+    return out
+
+
 def cmd_consent(store: Store, args):
     args.question, args.response = verbatim(args, "question", True), verbatim(args, "response", True)
     state = store.load()
@@ -342,12 +639,15 @@ def _quote(text: str) -> str:
     return "\n".join("> " + line for line in str(text).splitlines() or [""])
 
 
-def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: str | None) -> str:
+def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: str | None,
+          short: bool = False) -> str:
     """The launch prompt, built only from recorded state so nothing is paraphrased on the way."""
     title, workflow, first_doc = PHASE_BRIEFS[phase]
     ini, consent = state["initiative"], state["consent"]
     if phase == "P2" and not milestone:
         raise StateError("a P2 brief needs --milestone")
+    if short and phase != "P2":
+        raise StateError("--short applies to a P2 brief only")
     if not consent.get("status"):
         raise StateError("no consent recorded; ask the consent question and record it with `consent` first")
     if consent["status"] == "authorized" and not (consent.get("question") and consent.get("response")):
@@ -371,7 +671,23 @@ def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: st
     ]
     if milestone:
         row = state["milestones"].get(milestone) or {}
-        lines += ["", f"Milestone: {milestone}" + (f". Scope: {row['scope']}" if row.get("scope") else "")]
+        lines += ["", f"Milestone: {milestone}" + (f". Scope: {row['scope']}" if row.get("scope") else "")
+                  + (f". Link: {row['link']}" if row.get("link") else "")]
+        if short:
+            lines += ["", "## Short P2",
+                      "This is a short P2: the user supplied no kickoff or analysis, and the invocation may already "
+                      "hold some of the artifacts below.",
+                      "- Draft the specs and the verification contract in one document on the specs surface.",
+                      "- The specs part is approved first and produces the implementation handoff and its "
+                      "checkpoint at once.",
+                      "- The contract part follows: once approved, it produces the verification handoff.",
+                      "- Export each approved part to specs.md and verification-contract.md."]
+            supplied = {k: v for k, v in state["artifacts"].items()
+                        if v.get("decision") == "supplied" and k.endswith(f"-{milestone}")
+                        or k.startswith(f"context-{milestone}-")}
+            if supplied:
+                lines += ["", "Supplied artifacts and context:"]
+                lines += [f"- {k}: {v.get('path') or v.get('url')}" for k, v in supplied.items()]
     approved = {k: v for k, v in state["artifacts"].items() if v.get("decision") == "approved"}
     if approved:
         lines += ["", "Approved artifacts (path, SHA-256):"]
@@ -402,7 +718,7 @@ def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: st
 
 
 def cmd_brief(store: Store, args):
-    return brief(store.folder, store.load(), args.phase, args.milestone, args.name)
+    return brief(store.folder, store.load(), args.phase, args.milestone, args.name, args.short)
 
 
 def cmd_show(store: Store, args):
@@ -470,17 +786,32 @@ def cmd_render(store: Store, args):
     return text
 
 
+def request_options(p) -> None:
+    p.add_argument("--request", help="the user's Artifex invocation, verbatim")
+    p.add_argument("--request-file", help="a file holding the invocation verbatim; prefer it over --request")
+    p.add_argument("--ticket", help="override the ticket the request names")
+    p.add_argument("--milestone", help="the milestone id; defaults to M1")
+    p.add_argument("--scope", help="override the scope: a file, a link or a description")
+    p.add_argument("--specs", help="the specs file, when it isn't recognised")
+    p.add_argument("--contract", help="the verification contract file, when it isn't recognised")
+    p.add_argument("--handoff", help="the implementation handoff file, when it isn't recognised")
+    p.add_argument("--verification-handoff", help="the verification handoff file, when it isn't recognised")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--dir", type=Path, required=True, help="initiative folder")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init")
-    p.add_argument("--ticket", required=True)
+    p.add_argument("--mode", required=True, help="project, milestone, defect (or bug) or implementation")
+    p.add_argument("--mode-source", choices=["explicit", "recommended"], required=True)
     p.add_argument("--title")
-    p.add_argument("--track", choices=["feature", "bug"], default="feature")
-    p.add_argument("--request", help="the user's Artifex invocation, verbatim")
-    p.add_argument("--request-file", help="a file holding the invocation verbatim; prefer it over --request")
+    request_options(p)
     p.set_defaults(func=cmd_init)
+    p = sub.add_parser("route")
+    p.add_argument("--mode", help="override the mode the request states")
+    request_options(p)
+    p.set_defaults(func=cmd_route)
     p = sub.add_parser("consent")
     p.add_argument("--status", choices=["authorized", "declined", "manual relay"], required=True)
     p.add_argument("--question", help="the question exactly as asked")
@@ -506,6 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("phase", choices=sorted(PHASE_BRIEFS))
     p.add_argument("--milestone")
     p.add_argument("--name", help="the session name, if not the conventional one")
+    p.add_argument("--short", action="store_true", help="a short P2: specs and contract drafted in one document")
     p.set_defaults(func=cmd_brief)
     p = sub.add_parser("set")
     p.add_argument("section")

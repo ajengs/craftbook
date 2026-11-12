@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import sys
@@ -19,7 +20,8 @@ class StateCliTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name) / "CRAFT-1"
-        self.cli("init", "--ticket", "CRAFT-1", "--title", "Version flag")
+        self.cli("init", "--mode", "project", "--mode-source", "explicit", "--title", "Version flag",
+                 "--request", "/artifex project CRAFT-1 add a version flag")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -111,7 +113,8 @@ class DocTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name) / "T-1"
-        StateCliTests.cli(self, "init", "--ticket", "T-1")
+        StateCliTests.cli(self, "init", "--mode", "project", "--mode-source", "explicit", "--request",
+                          "/artifex project T-1")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -162,7 +165,8 @@ class BriefTests(unittest.TestCase):
         self.dir = Path(self.tmp.name) / "T-1"
         request = Path(self.tmp.name) / "request.txt"
         request.write_text('/artifex Ticket T-1. Add "--version" for $USER\nsecond line\n', encoding="utf-8")
-        self.cli("init", "--ticket", "T-1", "--request-file", str(request))
+        self.cli("init", "--mode", "project", "--mode-source", "explicit", "--ticket", "T-1",
+                 "--request-file", str(request))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -220,6 +224,281 @@ class BriefTests(unittest.TestCase):
         self.assertIn("Milestone: M1. Scope: version flag", text)
         self.assertIn("- kickoff:", text)
         self.assertIn("doc surface specs --milestone M1", text)
+
+
+class ModeTests(unittest.TestCase):
+    SPECS = "# Specifications — M1\n\nbody\n"
+    CONTRACT = "# Verification contract — M1\n\nbody\n"
+    HANDOFF = "---\nbranch: feat/x\nworkdir: D:/w\ntarget: main\n---\n# Implementation handoff\n"
+    VERIFICATION = "---\nauto:\n  - V1\nmanual: []\n---\n# Verification handoff\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.dir = self.root / "ART-20"
+        self.docs = self.root / "My Docs"
+        self.docs.mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, name, text):
+        path = self.docs / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def run_cli(self, *args, expect=0):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = st.main(["--dir", str(self.dir), *args])
+        self.assertEqual(code, expect, err.getvalue())
+        return json.loads(out.getvalue() if expect == 0 else err.getvalue())
+
+    def route(self, request, *args, expect=0):
+        file = self.root / "request.txt"
+        file.write_text(request, encoding="utf-8")
+        return self.run_cli("route", "--request-file", str(file), *args, expect=expect)
+
+    def init(self, request, mode, *args, source="explicit", expect=0):
+        file = self.root / "request.txt"
+        file.write_text(request, encoding="utf-8")
+        return self.run_cli("init", "--mode", mode, "--mode-source", source, "--request-file", str(file), *args,
+                            expect=expect)
+
+    def state(self):
+        return json.loads((self.dir / "state.json").read_text(encoding="utf-8"))
+
+    def implementation_files(self):
+        return {"specs": self.write("specs.md", self.SPECS), "contract": self.write("contract.md", self.CONTRACT),
+                "handoff": self.write("handoff.md", self.HANDOFF),
+                "verification": self.write("verification.md", self.VERIFICATION)}
+
+    def test_tokenize_keeps_windows_paths_and_quoted_paths_with_spaces(self):
+        self.assertEqual(st.tokenize('/artifex "D:\\My Docs\\x.md" D:\\a\\b.md add it'),
+                         ["/artifex", "D:\\My Docs\\x.md", "D:\\a\\b.md", "add", "it"])
+        self.assertEqual(st.tokenize("add the uploader's retries"), ["add", "the", "uploader's", "retries"])
+
+    def test_route_reads_every_mode_form_and_writes_nothing(self):
+        scope = self.write("scope.md", "scope\n")
+        forms = [f'/artifex milestone ART-20 "{scope}"', f'/artifex --mode milestone ART-20 "{scope}"',
+                 f'artifex --mode=milestone ART-20 "{scope}"', f'/artifex milestone --mode=milestone ART-20 "{scope}"']
+        for form in forms:
+            out = self.route(form)
+            self.assertEqual((out["mode"], out["mode_source"], out["start"], out["ticket"]),
+                             ("milestone", "explicit", "P2", "ART-20"), form)
+            self.assertEqual(out["files"], [str(scope.resolve())])
+            self.assertEqual((out["text"], out["links"], out["contract"]["ok"]), ("", [], True))
+            self.assertTrue(any("brief P2 --milestone M1" in step for step in out["next"]))
+        text = self.route("/artifex milestone ART-20 add retries to the uploader")
+        self.assertEqual((text["text"], text["files"]), ("add retries to the uploader", []))
+        self.assertFalse(self.dir.exists())
+
+    def test_bug_is_stored_as_defect(self):
+        for request in ("/artifex bug ART-5 crash on save", "/artifex --mode bug ART-5 crash on save"):
+            out = self.route(request)
+            self.assertEqual((out["mode"], out["start"]), ("defect", "D1"))
+        self.init("/artifex bug ART-5 crash on save", "bug")
+        self.assertEqual(self.state()["initiative"]["mode"], "defect")
+
+    def test_a_request_without_a_mode_needs_a_recommendation(self):
+        doc = self.write("artifex-modes.md", "design\n")
+        out = self.route(f'/artifex ART-19 "{doc}"')
+        self.assertTrue(out["needs_recommendation"])
+        self.assertNotIn("start", out)
+        self.assertEqual([m["mode"] for m in out["modes"]], ["project", "milestone", "defect", "implementation"])
+        self.assertTrue(all(m["start"] and m["contract"] for m in out["modes"]))
+
+    def test_unknown_conflicting_and_missing_paths_are_refused(self):
+        self.assertIn("modes:", self.route("/artifex --mode nope ART-1", expect=2)["error"])
+        conflict = self.route("/artifex defect --mode milestone ART-1 text", expect=2)["error"]
+        self.assertIn("--mode milestone", conflict)
+        self.assertIn("leading word defect", conflict)
+        self.assertEqual(self.route("/artifex milestone --mode=milestone ART-1 text")["mode"], "milestone")
+        for token in ("Z:\\nowhere\\scope.md", "/nowhere/scope.md"):
+            self.assertIn("path not found", self.route(f"/artifex milestone ART-1 {token}", expect=2)["error"])
+        self.assertIn("path not found", self.init("/artifex milestone ART-1 /nowhere/scope.md", "milestone",
+                                                  expect=2)["error"])
+        self.assertFalse(self.dir.exists())
+
+    def test_milestone_needs_a_scope(self):
+        out = self.route("/artifex milestone ART-20")
+        self.assertFalse(out["contract"]["ok"])
+        self.assertEqual(out["next"], [])
+        self.assertIn("needs a scope: a file, a link or a description in the request", out["contract"]["problem"])
+        self.assertIn("needs a scope", self.init("/artifex milestone ART-20", "milestone", expect=2)["error"])
+        self.assertFalse(self.dir.exists())
+
+    def test_milestone_init_registers_the_row_with_link_and_scope(self):
+        out = self.init("/artifex milestone ART-20 https://example.com/spec retry the uploader", "milestone",
+                        "--milestone", "M2", "--title", "Uploader")
+        self.assertEqual(out["mode"], "milestone")
+        self.assertTrue(any("brief P2 --milestone M2" in step for step in out["next"]))
+        state = self.state()
+        self.assertEqual(state["milestones"]["M2"], {"status": "selected", "link": "https://example.com/spec",
+                                                     "scope": "retry the uploader"})
+        self.assertEqual(state["initiative"]["ticket"], "ART-20")
+
+    def test_milestone_scope_file_is_the_link(self):
+        scope = self.write("scope.md", "scope\n")
+        self.init(f'/artifex milestone ART-20 "{scope}"', "milestone")
+        self.assertEqual(self.state()["milestones"]["M1"], {"status": "selected", "link": str(scope.resolve())})
+
+    def test_project_and_defect_need_only_a_request(self):
+        self.assertEqual(self.route("/artifex project ART-1 research it")["start"], "P1")
+        self.assertFalse(self.route("/artifex project")["contract"]["ok"])
+        self.init("/artifex", "defect", expect=2)
+        out = self.init("/artifex defect ART-5", "defect")
+        self.assertTrue(out["next"][-1].endswith("brief D1"))
+
+    def test_initiative_holds_mode_and_source_but_no_track(self):
+        self.init("/artifex ART-20 something", "project", source="recommended")
+        initiative = self.state()["initiative"]
+        self.assertEqual((initiative["mode"], initiative["mode_source"]), ("project", "recommended"))
+        self.assertNotIn("track", initiative)
+
+    def test_init_needs_a_mode_and_a_mode_source(self):
+        for args in (["init", "--mode-source", "explicit", "--request", "/artifex ART-1 x"],
+                     ["init", "--mode", "project", "--request", "/artifex ART-1 x"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                st.main(["--dir", str(self.dir), *args])
+        self.assertIn("request", self.run_cli("init", "--mode", "project", "--mode-source", "explicit",
+                                              expect=2)["error"])
+        self.assertIn("no ticket", self.init("/artifex project just words", "project", expect=2)["error"])
+
+    def test_init_refuses_a_mode_that_disagrees_with_the_request(self):
+        self.assertIn("conflicting modes", self.init("/artifex defect ART-1 x", "milestone", expect=2)["error"])
+
+    def test_implementation_with_the_four_artifacts_is_ready_and_recorded(self):
+        files = self.implementation_files()
+        request = "/artifex implementation ART-20 " + " ".join(f'"{p}"' for p in files.values())
+        out = self.route(request)
+        self.assertEqual((out["start"], out["contract"]["result"]), ("router", "artifacts ready"))
+        joined = "\n".join(out["next"])
+        self.assertIn("artifex_flow.py", joined)
+        self.assertIn("--kind implementation", joined)
+        self.assertIn("--kind verification", joined)
+        self.init(request, "implementation")
+        artifacts = self.state()["artifacts"]
+        for name, key in (("specs-M1", "specs"), ("verification-contract-M1", "contract")):
+            row = artifacts[name]
+            self.assertEqual((row["decision"], row["surface"], row["path"]),
+                             ("approved", "invocation", str(files[key].resolve())))
+            self.assertEqual(row["sha256"], hashlib.sha256(files[key].read_bytes()).hexdigest())
+            self.assertIn("invocation", row["source"])
+        self.assertEqual(artifacts["implementation-handoff-M1"]["decision"], "supplied")
+        self.assertEqual(artifacts["verification-handoff-M1"]["path"], str(files["verification"].resolve()))
+        self.assertEqual(self.state()["milestones"]["M1"]["status"], "selected")
+
+    def test_flags_name_an_artifact_recognition_cannot_identify(self):
+        files = self.implementation_files()
+        other = self.write("design.md", "# Design notes\n")
+        files["specs"].unlink()
+        request = f'/artifex implementation ART-20 "{files["contract"]}" "{files["handoff"]}" ' \
+                  f'"{files["verification"]}" "{other}"'
+        self.assertEqual(self.route(request)["contract"]["result"], "short P2")
+        out = self.route(request, "--specs", str(other))
+        self.assertEqual(out["contract"]["result"], "artifacts ready")
+        self.assertEqual(out["contract"]["artifacts"]["specs"], str(other.resolve()))
+        self.assertIn(f'--specs "{other}"', "\n".join(out["next"]))
+
+    def test_implementation_with_missing_artifacts_and_context_is_a_short_p2(self):
+        handoff = self.write("handoff.md", self.HANDOFF)
+        unknown = self.write("notes.md", "# Notes\n")
+        request = f'/artifex implementation ART-20 "{handoff}" "{unknown}" https://example.com/x retry uploads'
+        out = self.route(request, "--milestone", "M3")
+        self.assertEqual((out["start"], out["contract"]["result"]), ("P2", "short P2"))
+        self.assertTrue(any("brief P2 --milestone M3 --short" in step for step in out["next"]))
+        self.init(request, "implementation", "--milestone", "M3")
+        state = self.state()
+        self.assertEqual(state["milestones"]["M3"]["scope"], "retry uploads")
+        self.assertEqual(state["milestones"]["M3"]["link"], str(unknown.resolve()))
+        self.assertEqual(state["artifacts"]["implementation-handoff-M3"]["decision"], "supplied")
+        self.assertNotIn("specs-M3", state["artifacts"])
+        self.assertEqual({row.get("path") or row.get("url") for name, row in state["artifacts"].items()
+                          if name.startswith("context-M3")}, {str(unknown.resolve()), "https://example.com/x"})
+
+    def test_implementation_with_only_a_context_file_or_an_artifact_is_a_short_p2(self):
+        self.assertEqual(self.route(f'/artifex implementation ART-20 "{self.write("a.md", "x")}"')["start"], "P2")
+        self.assertEqual(self.route(f'/artifex implementation ART-20 "{self.write("s.md", self.SPECS)}"')["start"],
+                         "P2")
+
+    def test_implementation_refusals_name_the_problem_and_never_fall_back(self):
+        none = self.route("/artifex implementation ART-20")
+        self.assertIn("four artifacts", none["contract"]["problem"])
+        self.assertIn("short P2", self.init("/artifex implementation ART-20", "implementation", expect=2)["error"])
+        empty = self.write("empty.md", "---\n---\n# Handoff\n")
+        partial = self.write("partial.md", "---\nbranch: x\n---\n# Handoff\n")
+        one = self.write("one.md", self.SPECS)
+        two = self.write("two.md", self.SPECS)
+        for files, expected in (([empty], "empty.md: the handoff frontmatter is empty"),
+                                ([partial], "partial.md: the implementation handoff frontmatter lacks workdir, target"),
+                                ([one, two], "specs recognised twice")):
+            request = "/artifex implementation ART-20 retry uploads " + " ".join(f'"{p}"' for p in files)
+            self.assertIn(expected, self.route(request)["contract"]["problem"])
+            self.assertIn(expected, self.init(request, "implementation", expect=2)["error"])
+        self.assertFalse(self.dir.exists())
+
+    def test_a_flagged_handoff_without_its_keys_is_refused(self):
+        notes = self.write("notes.md", "---\ntitle: x\n---\n")
+        out = self.route(f'/artifex implementation ART-20 "{notes}" retry', "--handoff", str(notes))
+        self.assertIn("lacks branch, workdir, target", out["contract"]["problem"])
+
+    def test_a_resumed_initiative_reports_its_stored_mode(self):
+        self.init("/artifex defect ART-5 crash", "defect")
+        out = self.route("/artifex milestone ART-5 something else")
+        self.assertEqual((out["stored"], out["mode"], out["start"]), (True, "defect", "D1"))
+        self.run_cli("init", "--mode", "defect", "--mode-source", "explicit", "--request", "/artifex defect ART-5",
+                     expect=2)
+
+    def old_state(self, track):
+        self.dir.mkdir(parents=True, exist_ok=True)
+        state = st.new_state("OLD-1", "Old", "x", "explicit", "/artifex OLD-1")
+        state["initiative"] = {"ticket": "OLD-1", "title": "Old", "track": track, "request": "/artifex OLD-1"}
+        state["consent"] = {"status": "declined", "question": "q", "response": "no", "date": "2026-01-01"}
+        (self.dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    def test_an_old_state_with_track_loads_and_keeps_it(self):
+        for track, mode in (("bug", "defect"), ("feature", "project")):
+            self.old_state(track)
+            self.assertEqual(st.effective_mode(self.state()), mode)
+            self.assertEqual(self.route("/artifex x")["mode"], mode)
+            self.assertEqual(self.run_cli("show", "--section", "initiative")["track"], track)
+            self.run_cli("set", "status", "phase=P2")
+            self.assertEqual(self.state()["initiative"]["track"], track)
+            self.assertNotIn("mode", self.state()["initiative"])
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(st.main(["--dir", str(self.dir), "render"]), 0, err.getvalue())
+                self.assertEqual(st.main(["--dir", str(self.dir), "brief", "P1"]), 0, err.getvalue())
+            self.assertIn("# STATE", out.getvalue())
+            (self.dir / "state.json").unlink()
+
+    def test_the_mode_and_the_retired_track_cannot_be_set(self):
+        self.old_state("bug")
+        for pair in ("mode=project", "mode_source=explicit", "track=feature", "track="):
+            self.run_cli("set", "initiative", pair, expect=2)
+        self.assertEqual(self.state()["initiative"]["track"], "bug")
+        self.run_cli("set", "initiative", "title=Renamed")
+
+    def test_short_p2_brief_adds_instructions_and_supplied_paths(self):
+        handoff = self.write("handoff.md", self.HANDOFF)
+        self.init(f'/artifex implementation ART-20 "{handoff}" https://example.com/x retry uploads', "implementation")
+        self.run_cli("consent", "--status", "declined", "--question", "q", "--response", "no")
+        plain = st.brief(self.dir, self.state(), "P2", "M1", None)
+        self.assertIn("Milestone: M1. Scope: retry uploads. Link: https://example.com/x", plain)
+        self.assertNotIn("Short P2", plain)
+        short = st.brief(self.dir, self.state(), "P2", "M1", None, short=True)
+        self.assertIn("in one document", short)
+        self.assertIn("approved first and produces the implementation handoff", short)
+        self.assertIn(str(handoff.resolve()), short)
+        self.assertIn("https://example.com/x", short)
+        with self.assertRaises(st.StateError):
+            st.brief(self.dir, self.state(), "P1", None, None, short=True)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(st.main(["--dir", str(self.dir), "brief", "P2", "--milestone", "M1", "--short"]), 0,
+                             err.getvalue())
+        self.assertIn("Short P2", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -694,6 +694,27 @@ class CliTests(unittest.TestCase):
         self.assertEqual(out["actions"][0]["phase"], "P4")
         self.assertIn("Active runs: M1-P4-1 (P4, not confirmed started)", self.cli("status"))
 
+    def test_init_takes_no_track_and_stores_none(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        event = json.loads((self.mdir / "run.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        self.assertNotIn("track", event)
+        self.assertNotIn("track", af.new_state())
+
+    def test_an_old_log_with_track_folds_and_reports_the_same_status(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        plain = self.cli("status")
+        lines = (self.mdir / "run.jsonl").read_text(encoding="utf-8").splitlines()
+        old = json.loads(lines[0])
+        old["track"] = "bug"
+        other = self.mdir.parent / "M2"
+        other.mkdir()
+        (other / "run.jsonl").write_text(json.dumps(old, sort_keys=True) + "\n", encoding="utf-8")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(af.main(["status", "--dir", str(other)]), 0, err.getvalue())
+        self.assertEqual(out.getvalue(), plain)
+        self.assertNotIn("track", af.fold(af.read_events(other)))
+
     def test_unpushed_head_and_internal_codes_are_rejected(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
         p3 = self.cli("handoff", "--kind", "implementation",
@@ -810,7 +831,8 @@ class CliTests(unittest.TestCase):
         import artifex_state as st
         initiative = self.mdir.parent.parent
         with contextlib.redirect_stdout(io.StringIO()):
-            st.main(["--dir", str(initiative), "init", "--ticket", "T-1"])
+            st.main(["--dir", str(initiative), "init", "--mode", "project", "--mode-source", "explicit",
+                     "--request", "/artifex project T-1"])
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
         wait = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
         self.assertEqual(wait["actions"][0]["action"], "wait")
@@ -831,7 +853,8 @@ class CliTests(unittest.TestCase):
         import artifex_state as st
         initiative = self.mdir.parent.parent
         with contextlib.redirect_stdout(io.StringIO()):
-            st.main(["--dir", str(initiative), "init", "--ticket", "T-1"])
+            st.main(["--dir", str(initiative), "init", "--mode", "project", "--mode-source", "explicit",
+                     "--request", "/artifex project T-1"])
             st.main(["--dir", str(initiative), "delivery", "--status", "declined",
                      "--question", "May sub agents branch, commit, push and open the PR?", "--response", "No"])
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
