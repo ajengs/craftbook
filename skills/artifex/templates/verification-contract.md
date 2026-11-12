@@ -20,6 +20,7 @@ Routine test and CI runs are not scenarios. List what they don't show. Keep each
 ## Raw output location / derivation method
 
 ## Material limitations / exclusions
+Refer to rows of `tradeoffs.md` instead of restating them. List only what this contract's own method can't show.
 
 ## Open decisions
 Each question the user must answer before approval, with the options and a recommendation. None if there are none.

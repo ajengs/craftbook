@@ -3,7 +3,7 @@
 ## Specifications (P2)
 
 - Write concise, testable behaviors as a table with one row per behavior: code, given, when, then, related classes/methods. Give classes/methods where known and leave the cell empty rather than guess.
-- Add Constraints and Boundaries (behaviors to preserve, out of scope, relevant edge cases) only for what is not already covered elsewhere. Each part is optional. Edge cases follow `standards/design.md`. Avoid restating the analysis.
+- Add Constraints and Boundaries (behaviors to preserve, out of scope, relevant edge cases, tradeoffs and limitations accepted) only for what is not already covered elsewhere. Each part is optional. Edge cases follow `standards/design.md`. Avoid restating the analysis.
 - User approval must name the exact artifact revision before the verification contract is drafted.
 
 ## Implementation handoff (P2 → P3)
@@ -27,4 +27,5 @@
 - Prefer extended integration tests that can run without running the app. For a benchmark, its session adds the harness it needs. Mark each scenario `auto` (P5) or `manual` (P6); either part may be empty. An optional full PR review (the PR reviewer on the whole PR) can be listed too. It runs only if the user approves the contract with it included.
 - For benchmarks only: comparison baseline, workload equivalence, repetitions/noise/invalid-run rules, and derivation method as relevant.
 - Name where raw evidence will be stored; do not assume it already exists.
+- Don't restate the tradeoffs register in the contract: refer to its rows, and add a scenario only where a boundary can be checked.
 - Reconcile the draft with the currently approved specs before requesting approval. If materially affected by later changes, seek approval again before P5.
