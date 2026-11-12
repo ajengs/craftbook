@@ -273,7 +273,7 @@ def notify_committed(session, event: dict, checkpoints: list, suppress: bool = F
     if any(cp.get("halted") for cp in checkpoints):
         cp = next(cp for cp in checkpoints if cp.get("halted"))
         result = event.get("result", {})
-        episode = cp.get("run_id") or result.get("run_id") or "episode"
+        episode = cp.get("run_id") or result.get("run_id") or event.get("seq") or "episode"
         try:
             _warn_status(send_event(session.mdir.resolve().parent.parent, ticket, milestone,
                                     {"key": f"halt/{cp['kind']}/{episode}",
