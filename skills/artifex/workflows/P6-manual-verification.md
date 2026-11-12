@@ -11,7 +11,7 @@
 1. Check that the reviewed changeset and contract/spec revisions align. If not, stop and reconcile affected approvals.
 2. Execute **the manual scenarios**, with the same care as P5: raw output and derived calculations kept separate, workloads and pass conditions never altered to make a run pass, tests committed only once the umbrella confirms that no implementation sub agent is active on the PR's branch, and any push reported to the umbrella. A benchmark marked manual runs through the benchmark designer's Run mode (`SKILL.md`, Optional tools), which refuses to run unless the contract is approved as local markdown. Its session adds the harness it needs.
 3. Add the results to the **same verification report** that P5 started, never a new one (`SKILL.md`, Documents). **Notify the umbrella when results are in** by writing the result file to the given `result_path` (`references/orchestration.md`), with the outcome of every manual scenario, and return only that path.
-4. Derive `pass`, `fail`, or `inconclusive` **from the contract**, not confidence or prose.
+4. Derive `pass`, `fail`, or `inconclusive` **from the contract**, not confidence or prose. Treat `tradeoffs.md` as in P5: it never relaxes a pass condition, and behavior outside a row's boundary is a finding.
 5. On `fail`, route as in P5: defects to P3, design/spec issues to P2, invalid research assumptions to P1, major findings to a bug investigation (D1), through the umbrella; unclear cases to user triage.
 6. On `pass`, with P5 also passed or not applicable, mark **ready for acceptance** and request **explicit user sign-off**. Only the umbrella may record `closed` after that approval.
 

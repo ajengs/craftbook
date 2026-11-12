@@ -8,6 +8,7 @@ The frontmatter is read by the router (`references/orchestration.md`, Handoff fr
 
 Approved specs: <path@revision>
 Approved verification contract: <path@revision>
+Known tradeoffs and limitations: <path to `tradeoffs.md`>. Behavior inside a row's boundary that no scenario's pass condition covers is reported as known, not as a failure. Outside the boundary it is a finding. A row never relaxes a pass condition.
 Branch / PR: <given by the umbrella when it starts you>
 Run by: an isolated sub agent of the umbrella session, using the `artifex` skill. P5 auto verification (`workflows/P5-verification.md`) runs the auto scenarios. P6 manual verification (`workflows/P6-manual-verification.md`) runs the manual ones, on the user's trigger.
 Model / effort: <resolved selection from `SKILL.md`, Model allocation; separate reviewer selection if included; P6 selection when applicable; any override and reason>

@@ -20,6 +20,7 @@ Session name: `<ticket id> P3 implementation <additional context if any>`
 ## Relevant components / locations
 
 ## Scope boundaries, exclusions and constraints
+Known tradeoffs and limitations: <path to `tradeoffs.md`>. Don't build around an `accepted` or `deferred` row. If the change would cross a row's boundary, or you find a limitation that isn't listed, report it through the umbrella; don't decide it.
 
 ## Required checks and expected deliverable
 
