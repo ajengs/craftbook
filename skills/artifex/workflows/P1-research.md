@@ -1,6 +1,6 @@
 # P1 — Research & analysis
 
-**Entry:** User has a problem and a reason to investigate it. **Start:** the umbrella creates this session immediately when the user starts Artifex. **Owner:** User frames; research agent investigates.
+**Entry:** User has a problem and a reason to investigate it. **Start:** the umbrella creates this session when `route` prints P1 as the start (`project` mode, or a mode the user approved after a recommendation). **Owner:** User frames; research agent investigates.
 
 **Inputs:** Problem, why, goals/objectives, in scope, out of scope, optional hypothesis; relevant references.
 

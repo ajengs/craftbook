@@ -85,7 +85,7 @@ class GitError(Exception):
 
 def new_state() -> dict:
     return {
-        "milestone": None, "ticket": None, "track": "feature",
+        "milestone": None, "ticket": None,
         "code_patterns": list(DEFAULT_CODE_PATTERNS), "doc_patterns": list(DEFAULT_DOC_PATTERNS),
         "handoffs": {}, "deps_met": [],
         # "equivalent" holds the heads whose code matches the last code push:
@@ -198,7 +198,7 @@ def after_review(state: dict, from_pass: bool) -> list:
 def on_init(state, ev):
     if state["milestone"] is not None:
         raise FlowError("milestone already initialized")
-    state.update(milestone=ev["milestone"], ticket=ev["ticket"], track=ev.get("track", "feature"))
+    state.update(milestone=ev["milestone"], ticket=ev["ticket"])
     state["code_patterns"] = DEFAULT_CODE_PATTERNS + list(ev.get("code_patterns", []))
     state["doc_patterns"] = DEFAULT_DOC_PATTERNS + list(ev.get("doc_patterns", []))
     if ev.get("umbrella_session"):
@@ -1180,7 +1180,7 @@ def cmd_init(args):
     if session.events:
         raise FlowError(f"{args.dir / 'run.jsonl'} already exists")
     (args.dir / "results").mkdir(parents=True, exist_ok=True)
-    session.record({"type": "init", "milestone": args.milestone, "ticket": args.ticket, "track": args.track,
+    session.record({"type": "init", "milestone": args.milestone, "ticket": args.ticket,
                     "code_patterns": args.code_pattern, "doc_patterns": args.doc_pattern,
                     "umbrella_session": args.umbrella_session})
     return session.respond(dispatch=not args.dry_run)
@@ -1366,7 +1366,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = command("init")
     p.add_argument("--milestone", required=True)
     p.add_argument("--ticket", required=True)
-    p.add_argument("--track", choices=["feature", "bug"], default="feature")
     p.add_argument("--code-pattern", action="append", default=[], help="extra internal-code regex")
     p.add_argument("--doc-pattern", action="append", default=[], help="extra docs-only glob")
     p.add_argument("--umbrella-session", help="the umbrella's own session or thread id")
