@@ -27,7 +27,7 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
 
 1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id> [--track bug]` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. The first implementation handoff returns a `compact_umbrella` checkpoint: everything P1 and P2 settled is on disk by then, so compact the umbrella if the host lets it, or post the suggestion to the user (`SKILL.md`, Execution efficiency). Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
 2. **Carry out the actions in order:**
-   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> --agent <harness id>`; chain it with your next router call rather than spending a turn on it. Pass `--agent` whenever the harness returns an id: it is how that run's cost is found later. In Claude Code it is the agent id the Agent tool returns, whose transcript is `~/.claude/projects/<project>/<umbrella session>/subagents/agent-<id>.jsonl`; in Codex it is the thread id. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
+   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. P3, P5 and P6 spawns carry `inputs.delivery_authorization`, the user's verbatim answer from `state.json`: that is the permission to branch, commit, push and open the PR, so don't ask the user again before spawning. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> --agent <harness id>`; chain it with your next router call rather than spending a turn on it. Pass `--agent` whenever the harness returns an id: it is how that run's cost is found later. In Claude Code it is the agent id the Agent tool returns, whose transcript is `~/.claude/projects/<project>/<umbrella session>/subagents/agent-<id>.jsonl`; in Codex it is the thread id. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
    - `spawn` with `unconfirmed`: the router printed this run before and never got `started`. If the agent is in fact running, record `started`; if it never started, spawn it now; if it can't be started, record `run-failed`. The router never assumes a printed spawn happened, so a lost spawn can't leave it waiting forever.
    - `wait`: nothing to do. The reason says what it is waiting on.
    - `idle`: nothing is queued. Wait for a poll result, a user trigger or sign-off.
@@ -154,7 +154,7 @@ A result that fails any check halts the router as `result_rejected`, and the run
 
 | Event | Condition | Router does |
 |---|---|---|
-| Implementation handoff recorded | No PR yet | Starts P3 |
+| Implementation handoff recorded | No PR yet | Starts P3 once `state.json` has a delivery record; until then it waits and says so |
 | P3 `completed`, first PR | — | Posts the PR, starts review round 1 |
 | P4 `changes_requested` | Rounds left in the cycle | Starts a P3 rework with the review artifacts |
 | P3 rework answering P4 | — | Starts the next round, giving it the previous review and the last reviewed head |

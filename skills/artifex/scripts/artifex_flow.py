@@ -704,7 +704,18 @@ def _verification_blocker(state, active_phases):
     return None
 
 
-def next_actions(state: dict, siblings=(), hash_of=None) -> list:
+def _delivery_blocker(delivery) -> str | None:
+    """None when ungated (no initiative state) or authorized; otherwise why P3 can't start."""
+    if delivery is None or delivery.get("status") == "authorized":
+        return None
+    if not delivery.get("status"):
+        return ("no delivery authorization recorded; ask the user once whether sub agents may branch, commit, "
+                "push and open the PR, and record the reply with `artifex_state.py delivery`")
+    return (f"delivery is {delivery['status']}: implementation can't push or open the PR; the user does that, "
+            "then record it with `event complete`")
+
+
+def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
     if state["closed"]:
         return [{"action": "done", "reason": "milestone closed"}]
     if state["halt"]:
@@ -717,7 +728,8 @@ def next_actions(state: dict, siblings=(), hash_of=None) -> list:
     ver = state["handoffs"].get("verification")
 
     if "P3" in state["requests"]:
-        reason = _p3_blocker(state, siblings, active_phases) or _changed(state, ["implementation"], hash_of)
+        reason = _p3_blocker(state, siblings, active_phases) or _delivery_blocker(delivery) \
+            or _changed(state, ["implementation"], hash_of)
         actions.append(_wait("P3", reason) if reason else spawn_action(state, "P3"))
 
     if "P4" in state["requests"]:
@@ -1056,10 +1068,26 @@ class Session:
         self.checkpoints.extend(cps)
         return cps
 
+    def delivery(self):
+        """The initiative's delivery authorization from state.json, or None where there is no state.json."""
+        path = self.mdir.resolve().parent.parent / "state.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8")).get("delivery") or {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
     def respond(self, dispatch: bool = True) -> dict:
+        delivery = self.delivery()
         actions = next_actions(self.state, load_siblings(self.mdir),
-                               hash_of=lambda p: file_sha(resolve(self.mdir, p)))
+                               hash_of=lambda p: file_sha(resolve(self.mdir, p)), delivery=delivery)
         for action in actions:
+            if action["action"] == "spawn" and action["phase"] != "P4" and delivery \
+                    and delivery.get("status") == "authorized":
+                # The user's own words, so neither the umbrella nor the agent asks again.
+                action["inputs"]["delivery_authorization"] = {
+                    k: delivery.get(k) for k in ("question", "response", "date", "source", "scope")}
             if action["action"] == "spawn" and dispatch and action["run_id"] not in self.state["active"]:
                 self.record({"type": "dispatched", "run_id": action["run_id"], "phase": action["phase"],
                              "round": action.get("round"), "head": action["inputs"].get("head"),

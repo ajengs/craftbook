@@ -14,6 +14,7 @@ Run `python <skill>/scripts/artifex_state.py --dir <initiative folder> <command>
 |---|---|
 | `init --ticket <id> [--title <t>] [--track bug] [--request-file <f>]` | Once, when the umbrella starts. The request file holds the user's invocation verbatim |
 | `consent --status <s> --question-file <f> --response-file <f> [--source <where>] [--scope <s>]` | The user answers the consent question. Both texts are stored verbatim; `--question`/`--response` work too, but files survive quotes, newlines and shells that rewrite `/...` |
+| `delivery --status <authorized\|declined> (--question-file <f> --response-file <f> \| --from-request) [--source <where>]` | The user answers the delivery question, or granted it in the invocation. Stored verbatim; the router holds P3 until it exists and passes it to every P3, P5 and P6 spawn |
 | `brief <P1\|P2\|D1> [--milestone <id>] [--name <n>]` | Creating a phase session: prints its launch prompt from state, quoting the request and the consent question and reply verbatim. Pass it unchanged |
 | `set <section> key=value ...` | Replace fields of `status`, `workspace`, `consent` or `initiative` |
 | `upsert <table> <name> key=value ...` | Add or update one row of `sessions`, `milestones`, `artifacts`, `blockers` or `polls` |
@@ -33,6 +34,7 @@ Run `python <skill>/scripts/artifex_state.py --dir <initiative folder> <command>
 |---|---|---|
 | `initiative` | ticket, title, track, request | `init`; `request` is the user's invocation verbatim |
 | `status` | phase, status, next | A phase starts or ends, or a posted checkpoint changes the next step. Status is one of draft, pending approval, implementing, in review, verifying, ready for acceptance, blocked, closed |
+| `delivery` | status, question, response, date, source, scope | Once, at the start, through `delivery` only |
 | `workspace` | workdir, workdir_kind, work_folder, project_folder, artifact_folder, source | Resolved at the start (`SKILL.md`, Workspace) |
 | `consent` | status, question, response, date, source, scope, umbrella_route | The user answers the consent question, through `consent` only |
 | `sessions` row per session name | role, session_id, route, model, effort, runtime, status | A phase session (P1, P2, D1) is created or finishes. `session_id` is the host's own id for it (the thread id in Codex; in Claude Code the transcript name if known, otherwise the `local_…` id the app returns), recorded at creation so its whole transcript can be costed later. A Claude Code `local_…` id doesn't name its transcript, so `artifex_cost.py` falls back to the session's title, which is why the row name must be the exact session name; P3–P6 agents are recorded by the router instead (`event started --agent`). `runtime` says what the host confirmed, or `unconfirmed` |

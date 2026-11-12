@@ -34,4 +34,4 @@ Raw output goes in the `evidence_dir` the umbrella gives when it starts you (`ev
 - Follow `SKILL.md`, Execution efficiency, for context, tool output and session transitions, and `policies/core.md`, Autonomous execution, for debugging and escalation.
 - Add tests only. Never change production code. A test that fails against the PR is a finding: run it, report it to the umbrella, and don't fix it here.
 - Internal codes (Artifex ids like SPEC- and VER-, phase codes, any other code coined in sessions) stay in notes. Don't put them in test names, code, commits, PRs or ticket comments; describe the behavior in words.
-- You may run build, test, commit and push on the PR's branch once the umbrella confirms that no implementation sub agent is active on it. Don't open or merge a PR, deploy or backport.
+- You may run build, test, commit and push on the PR's branch, as the user's `delivery_authorization` in your spawn inputs grants, once the umbrella confirms that no implementation sub agent is active on it. Don't open or merge a PR, deploy or backport.

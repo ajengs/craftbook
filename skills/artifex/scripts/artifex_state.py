@@ -17,6 +17,7 @@ Commands (each takes --dir <initiative folder>):
     render   print STATE.md, or write it with --out
     host     print the host and this session's own ids (no write)
     consent  record the consent question and the user's reply, both verbatim
+    delivery record whether sub agents may branch, commit, push and open PRs, verbatim
     brief    print the launch prompt for a P1, P2 or D1 session (no write)
     doc surface <doc>   print where a human-targeted document is reviewed on this host (no write)
     doc approve <doc>   record an approval, refusing a surface the host doesn't bind
@@ -45,6 +46,7 @@ SECTIONS = {
     "status": ("phase", "status", "next"),
     "workspace": ("workdir", "workdir_kind", "work_folder", "project_folder", "artifact_folder", "source"),
     "consent": ("status", "question", "response", "date", "source", "scope", "umbrella_route"),
+    "delivery": ("status", "question", "response", "date", "source", "scope"),
 }
 TABLES = {
     "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "status"),
@@ -146,7 +148,7 @@ def new_state(ticket: str, title: str | None, track: str, request: str | None = 
         initiative["request"] = request
     return {"schema": SCHEMA, "revision": 0, "updated": None,
             "initiative": initiative,
-            "status": {}, "workspace": {}, "consent": {},
+            "status": {}, "workspace": {}, "consent": {}, "delivery": {},
             **{table: {} for table in TABLES}, "decisions": []}
 
 
@@ -208,8 +210,9 @@ def cmd_set(store: Store, args):
     if args.section not in SECTIONS:
         raise StateError(f"unknown section {args.section!r}; sections: {', '.join(SECTIONS)}")
     fields = parse_pairs(args.pairs, SECTIONS[args.section])
-    if args.section == "consent" and {"question", "response", "status"} & set(fields):
-        raise StateError("record consent with the `consent` command, which keeps the question and reply verbatim")
+    if args.section in ("consent", "delivery") and {"question", "response", "status"} & set(fields):
+        raise StateError(f"record {args.section} with the `{args.section}` command, which keeps the question "
+                         "and reply verbatim")
     if args.section == "status" and fields.get("status") not in (None, *STATUSES):
         raise StateError(f"status must be one of: {', '.join(STATUSES)}")
     state = store.load()
@@ -314,6 +317,24 @@ def cmd_consent(store: Store, args):
     return store.save(state)
 
 
+DELIVERY_SCOPE = ("implementation and verification sub agents may create the branch, commit, push to it and open "
+                  "the pull request; merging, deploying and backporting are not included")
+
+
+def cmd_delivery(store: Store, args):
+    state = store.load()
+    if args.from_request:
+        if not state["initiative"].get("request"):
+            raise StateError("no request recorded; init with --request-file first")
+        question, response = "(stated in the user's Artifex invocation)", state["initiative"]["request"]
+    else:
+        question, response = verbatim(args, "question", True), verbatim(args, "response", True)
+    state.setdefault("delivery", {})
+    merge(state["delivery"], {"status": args.status, "question": question, "response": response,
+                              "date": now()[:10], "source": args.source, "scope": args.scope or DELIVERY_SCOPE})
+    return store.save(state)
+
+
 def _quote(text: str) -> str:
     return "\n".join("> " + line for line in str(text).splitlines() or [""])
 
@@ -367,6 +388,13 @@ def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: st
     else:
         lines += [f"Not authorized (status: {consent['status']}). Don't message the umbrella; give every "
                   "checkpoint to the user to relay."]
+    delivery = state.get("delivery") or {}
+    if delivery.get("status"):
+        lines += ["", "## Delivery authorization",
+                  f"On {delivery.get('date')}, the user was asked:", _quote(delivery["question"]), "",
+                  "and replied, verbatim:", _quote(delivery["response"]), "",
+                  f"Status: {delivery['status']}. Scope: {delivery.get('scope')}. Handoffs you write rely on this "
+                  "record; don't ask the user again for what it covers."]
     return "\n".join(lines) + "\n"
 
 
@@ -460,6 +488,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scope")
     p.add_argument("--route", help="the umbrella's route; defaults to this session's own id")
     p.set_defaults(func=cmd_consent)
+    p = sub.add_parser("delivery")
+    p.add_argument("--status", choices=["authorized", "declined"], required=True)
+    p.add_argument("--question")
+    p.add_argument("--question-file")
+    p.add_argument("--response")
+    p.add_argument("--response-file")
+    p.add_argument("--from-request", action="store_true",
+                   help="the user granted it in the Artifex invocation itself; quote that")
+    p.add_argument("--source")
+    p.add_argument("--scope")
+    p.set_defaults(func=cmd_delivery)
     p = sub.add_parser("brief")
     p.add_argument("phase", choices=sorted(PHASE_BRIEFS))
     p.add_argument("--milestone")

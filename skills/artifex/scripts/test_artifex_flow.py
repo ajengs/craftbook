@@ -714,6 +714,27 @@ class CliTests(unittest.TestCase):
         out = self.cli("event", "resume", "--note", "user accepts the extra commit in this PR")
         self.assertEqual((out["actions"][0]["action"], out["actions"][0]["phase"]), ("spawn", "P3"))
 
+    def test_p3_waits_for_delivery_authorization_then_carries_it(self):
+        import artifex_state as st
+        initiative = self.mdir.parent.parent
+        with contextlib.redirect_stdout(io.StringIO()):
+            st.main(["--dir", str(initiative), "init", "--ticket", "T-1"])
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        wait = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
+        self.assertEqual(wait["actions"][0]["action"], "wait")
+        self.assertIn("delivery authorization", wait["actions"][0]["reason"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            st.main(["--dir", str(initiative), "delivery", "--status", "authorized",
+                     "--question", "May sub agents branch, commit, push and open the PR?", "--response", "Yes"])
+        p3 = self.cli("next")["actions"][0]
+        self.assertEqual(p3["action"], "spawn")
+        self.assertEqual(p3["inputs"]["delivery_authorization"]["response"], "Yes")
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        git(self.repo.work, "push", "-q", "origin", "feature")
+        p4 = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
+                                              pr_url="https://example/pr/1"))["actions"][0]
+        self.assertNotIn("delivery_authorization", p4["inputs"])
+
     def test_runs_report_lists_agent_ids_and_windows(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "u1")
         p3 = self.cli("handoff", "--kind", "implementation",

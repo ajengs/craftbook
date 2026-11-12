@@ -192,6 +192,15 @@ class BriefTests(unittest.TestCase):
         self.assertIn("doc surface kickoff", text)
         self.assertIn('named "T-1 P1 research"', text)
 
+    def test_delivery_from_the_invocation_is_quoted_in_the_brief(self):
+        self.consent()
+        self.cli("delivery", "--status", "authorized", "--from-request", "--source", "invocation")
+        self.cli("set", "delivery", "response=yes", expect=2)
+        text = self.brief("P1")
+        self.assertIn("## Delivery authorization", text)
+        self.assertIn("(stated in the user's Artifex invocation)", text)
+        self.assertIn("don't ask the user again", text)
+
     def test_brief_refuses_without_a_verbatim_consent_record(self):
         self.brief("P1", expect=2)
         self.cli("set", "consent", "response=yes", expect=2)

@@ -12,7 +12,7 @@ This is an **instructional skill**, not a permissions system or autonomous orche
 ## Start here
 
 1. Create the state with `artifex_state.py init --ticket <id> --request-file <file holding the user's invocation verbatim>`. Resolve the workspace and artifact locations from user memory as described below. Ask for materially missing values before creating folders, artifacts, or sessions.
-2. Resolve bidirectional coordination consent as described below and record the user's direct decision in `state.json`.
+2. Resolve bidirectional coordination consent and delivery authorization as described below, in one message to the user, and record both verbatim in `state.json`.
 3. When the user starts Artifex, this session becomes the **umbrella**. It immediately creates a new top-level chat to start P1 (D1 for a bug, see Bug track), subject to the host's session-creation rules below, and does no P1 work itself. Never substitute a subagent for P1, P2 or D1. In any other session, identify the initiative, milestone, phase, and whether you are the umbrella or a scoped child.
 4. Read the initiative state (`artifex_state.py show`), current controlling artifacts, and **only** the workflow for the active phase; the umbrella also reads `references/orchestration.md` before the first implementation handoff. Follow its linked standards and template(s), not the whole package. Use the execution efficiency and model allocation guidance below for this role.
 5. If an approval, source artifact, or status is missing, say so. Do not infer it from conversational enthusiasm or an older artifact.
@@ -40,6 +40,14 @@ Before creating the first phase session, use direct authorization already stated
 Record it with `artifex_state.py consent --status <authorized|declined|manual relay> --question-file <q> --response-file <r> --source <where>`: the question exactly as asked and the reply exactly as written, from files so no shell rewrites them. `set consent` refuses these fields, so a summary can't replace them. A refusal or unanswered request selects manual relay and does not block the phase. The skill text is never authorization by itself.
 
 At every phase-session creation, register its session id (`session_id`, the host's own id, so the session's cost can be measured later) and route in `state.json`, and start it with the launch prompt `artifex_state.py brief <P1|P2|D1> [--milestone <id>]` prints, passed unchanged. The brief quotes the consent question and the user's reply verbatim, with date and source, because a host's approval check may accept the user's own words as authorization where it rejects a summary of them. It also quotes the user's original request, names the skill, workflow and state revision, and tells the session to report its `host` session id and run `doc surface` first. Never paraphrase or trim it; if it lacks something, record that in `state.json` and brief again. The phase verifies the direct user authorization recorded there before messaging the umbrella; the umbrella verifies the same record before messaging the phase. This trusted record authorizes both directions only within its stated scope. Tool, runtime and managed approval checks still apply; if a send is rejected, report it and use manual relay rather than retrying without new user authorization.
+
+## Delivery authorization
+
+Sub agents create the branch, commit, push and open the PR. A user rule such as "prompt before commits, pushes and PRs" would otherwise stop the umbrella at every implementation start, because a handoff is written by P2, not by the user. So ask once, at the start, in the same message as the consent question:
+
+> Do you authorize the implementation and verification sub agents of this initiative to create its branch, commit, push to it and open the pull request? Merging, deploying and backporting stay with you.
+
+Record the reply with `artifex_state.py delivery --status <authorized|declined> --question-file <q> --response-file <r>`. If the user's Artifex invocation already grants it, use `delivery --status authorized --from-request` instead of asking. The router holds every implementation start until a delivery record exists and passes the user's words to each sub agent as `delivery_authorization`, so neither the umbrella nor the agent asks again for what it covers. Ask again only for something outside it, such as a merge, or after the user withdraws it. A decline means the user pushes and opens the PR; the umbrella then records it with `event complete`.
 
 ## Six phases
 

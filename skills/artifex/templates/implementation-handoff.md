@@ -33,7 +33,7 @@ Every choice that would change the code's shape if reopened: test approach, test
 - Write no comments. If context is absolutely necessary, add the why in at most 3 lines.
 - Follow `SKILL.md`, Execution efficiency, for context, tool output and session transitions, and `policies/core.md`, Autonomous execution, for debugging and escalation.
 - Internal codes (Artifex ids like SPEC- and VER-, phase codes, any other code coined in sessions) stay in notes. Don't put them in code, tests, commits, PRs or ticket comments; describe the behavior in words.
-- You may run build, test, commit, push and open pull requests. Merging, deploying and backporting are not covered.
+- You may run build, test, commit, push and open pull requests, as the user's `delivery_authorization` in your spawn inputs grants. Don't ask again for what it covers. Merging, deploying and backporting are not covered.
 - End by writing the result file to the `result_path` the umbrella gave you and return only that path (`references/orchestration.md`, Result file).
 
 New design decisions during P3 go to user. This handoff has no approval step of its own: approval of the referenced specs, or for a bug of its fix approach, authorizes its creation; on a direct or reproduced path the diagnosis itself does.
