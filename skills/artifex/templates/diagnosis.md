@@ -1,4 +1,10 @@
+---
+auto: <[reproduction id] when P5 runs it, or [] when CI runs the regression test>
+manual: <[reproduction id] for a manual reproduction, or []>
+---
 # Diagnosis — <bug>
+
+The frontmatter is read by the router, which records this diagnosis as the verification handoff (`references/orchestration.md`).
 
 Source: <ticket link | P5 finding in milestone <id>>
 Seen on: <version, head or environment>
@@ -30,6 +36,9 @@ Same cause elsewhere: <sibling entry points, or none>.
 
 ## Path criteria
 Which conditions for the path are met and how they are shown. Confidence: <high | medium | low> and what would change it. For Confirm: what the user must approve or supply.
+
+## Open decisions
+Each question the user must answer before approval, with the options and a recommendation. None if there are none.
 
 ## Limitations
 What was not reproduced, tried or verified.

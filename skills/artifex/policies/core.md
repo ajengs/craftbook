@@ -5,9 +5,9 @@ These are **boundaries**, not a second workflow. Applies wherever relevant acros
 ## Human authority and approval
 
 - The user confirms problem framing, chooses design direction and milestone, approves the P2 specs and the verification contract, and explicitly signs off final milestone closure.
-- Approval is **artifact- and revision-specific**. Record the user's explicit decision and revision in the milestone `STATE.md`; ambiguous replies do not count. Approval records are evidence, not technical access controls.
+- Approval is **artifact- and revision-specific**. Record the user's explicit decision and revision in `state.json`; ambiguous replies do not count. Approval records are evidence, not technical access controls.
 - On a **material** change to an approved artifact, identify impacted specs, handoff, tests, and contracts; reconcile and request renewed approval where applicable. Do not keep executing against stale approvals.
-- Approval is needed again only when the specs or the verification contract change. A handoff has no approval of its own: specs approval authorizes the implementation handoff, and verification-contract approval authorizes the verification handoff. Write each immediately after its controlling approval and record it in `STATE.md`.
+- Approval is needed again only when the specs or the verification contract change. A handoff has no approval of its own: specs approval authorizes the implementation handoff, and verification-contract approval authorizes the verification handoff. Write each immediately after its controlling approval and record it in `state.json`.
 - Starting Artifex authorizes the initial P1 and P2 for the milestone selected in P1, and the implementation and review that follow. The umbrella starts P2 after P1 reports either (a) the approved kickoff and analysis revisions plus the selected milestone or (b) the approved kickoff revision plus the user's explicit confirmation that the scoped task is the milestone. More P2 sessions, one per further milestone or for an ad hoc analysis, start when the user asks the umbrella. Whenever a P2 session reports an approved specs revision, a completed implementation handoff and no blocker, the umbrella starts an isolated implementation sub agent from that handoff itself; there is no P3 session, and the verification contract is not a prerequisite. P4 and the verification run start from the umbrella's checkpoints. When P4 findings, P5 failures or PR feedback call for a rework, the umbrella starts a new implementation sub agent once the previous one has ended, up to the caps (3 review rounds, 2 reworks after P5 failures). A later route back to P2 or P1 always needs the user.
 - A session works from its own inputs and does not track other sessions unprompted. Cross-session changes go through the orchestrator, and the receiving session only processes the request.
 - After successful review and verification an agent may report **ready for acceptance**; it must not declare **closed** without user sign-off.
@@ -28,7 +28,7 @@ These are **boundaries**, not a second workflow. Applies wherever relevant acros
 
 ## Internal codes stay in notes
 
-- Codes we coin for tracking live only in notes: artifacts, `STATE.md`, handoffs and the status page. That covers Artifex ids such as `SPEC-` and `VER-`, phase and gate codes, and any other internal code introduced during a session.
+- Codes we coin for tracking live only in notes: artifacts, `state.json`, handoffs and the status page. That covers Artifex ids such as `SPEC-` and `VER-`, phase and gate codes, and any other internal code introduced during a session.
 - Never put them in code, tests or test names, comments, commit messages, PR titles, descriptions or comments, ticket comments, or any other surface outside the notes. Describe the behavior in words instead. Ticket ids are a team convention and stay.
 - This applies in every phase, and to any code added later.
 

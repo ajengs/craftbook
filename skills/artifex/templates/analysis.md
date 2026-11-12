@@ -13,4 +13,4 @@ Source kickoff: <path@revision>
 ## Material risks / assumptions / open questions
 
 ## Direction approved / selected milestone
-Pending user decision; record approval in `STATE.md`.
+Pending user decision; record approval in `state.json`.

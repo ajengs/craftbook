@@ -24,5 +24,6 @@ Only cases that affect requirements, design decisions or scope boundaries. Do no
 |---|---|---|---|
 
 ## Blocking questions
+Each question the user must answer before approval, including workspace choices such as branch, target or working directory, with the options and a recommendation. None if there are none.
 
-Approval: pending; explicit decision + revision recorded in milestone `STATE.md`.
+Approval: pending; explicit decision + revision recorded in `state.json`.

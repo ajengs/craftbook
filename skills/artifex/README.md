@@ -32,6 +32,8 @@ Approvals are tied to a specific revision of a specific artifact. Closing a mile
 
 This package can't spawn agents, lock files, ensure atomic writes, enforce approvals or isolate worktrees. The umbrella coordinates those only where the environment provides tooling. Approval records in files are evidence, not access controls.
 
+One deterministic piece is included: `scripts/artifex_flow.py`, a router for the P3–P6 loop. It decides what runs next, applies the review and rework caps, classifies pushes from git and checks each agent's result against its artifacts before acting on it. The umbrella carries out its actions and handles only the exceptions it raises. It needs Python 3.10+ and git 2.36+, and has no other dependencies. See `references/orchestration.md`. Beside it, `scripts/artifex_state.py` keeps the umbrella's structured state in `state.json` and renders a `STATE.md` only when the user asks (`references/state.md`). `scripts/artifex_cost.py` reports a milestone's token cost from Claude Code or Codex transcripts. Tests run with `python -m unittest test_artifex_flow test_artifex_state test_artifex_cost` from `scripts/`.
+
 ## Layout
 
 | Folder        | What it holds                                                                           |
@@ -40,7 +42,8 @@ This package can't spawn agents, lock files, ensure atomic writes, enforce appro
 | `standards/`  | How work and artifacts are produced: design, specifications, evidence, PR feedback      |
 | `workflows/`  | One procedure per phase                                                                 |
 | `templates/`  | Starting points for each artifact                                                       |
-| `references/` | Optional extras, such as a remote status page                                           |
+| `references/` | Optional extras, such as a remote status page, and the router reference                 |
+| `scripts/`    | The P3–P6 router, the state store, and their tests                                      |
 
 ## Optional tools
 
@@ -48,4 +51,4 @@ Workflows name tools by capability and `SKILL.md` binds each one, with a fallbac
 
 ## Out of scope for now
 
-Detailed code-review policy, automated approval gates, locking and agent orchestration, and delivery (merging, deployment, backports) unless separately authorized.
+Detailed code-review policy, automated approval gates, locking, a headless driver that launches agents itself, and delivery (merging, deployment, backports) unless separately authorized.
