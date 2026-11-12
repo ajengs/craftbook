@@ -227,7 +227,7 @@ def cmd_init(store: Store, args):
     register_scope(state, mode, parsed, contract)
     out = store.save(state)
     return {**out, "mode": mode, "mode_source": args.mode_source, "contract": contract["result"],
-            "next": next_commands(store.folder, mode, args.mode_source, parsed, contract, args)}
+            "next": next_commands(store.folder, mode, args.mode_source, parsed, contract, args)[1:]}
 
 
 def cmd_set(store: Store, args):
@@ -352,7 +352,6 @@ TICKET_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
 WEB_LINK = re.compile(r"^https?://", re.IGNORECASE)
 DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 FILE_EXTENSION = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,7}$")
-BACKSLASH = ""
 
 
 def canonical_mode(value: str) -> str:
@@ -363,8 +362,13 @@ def canonical_mode(value: str) -> str:
 
 
 def tokenize(text: str) -> list:
+    lexer = shlex.shlex(text, posix=True)
+    lexer.whitespace_split = True
+    lexer.quotes = '"'
+    lexer.escape = ""
+    lexer.commenters = ""
     try:
-        return [t.replace(BACKSLASH, "\\") for t in shlex.split(text.replace("\\", BACKSLASH))]
+        return list(lexer)
     except ValueError:
         return text.split()
 

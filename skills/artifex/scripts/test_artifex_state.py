@@ -278,6 +278,34 @@ class ModeTests(unittest.TestCase):
                          ["/artifex", "D:\\My Docs\\x.md", "D:\\a\\b.md", "add", "it"])
         self.assertEqual(st.tokenize("add the uploader's retries"), ["add", "the", "uploader's", "retries"])
 
+    def test_an_apostrophe_does_not_break_a_quoted_path(self):
+        scope = self.write("scope.md", "scope\n")
+        self.assertEqual(st.tokenize(f'milestone "{scope}" the uploader\'s retries'),
+                         ["milestone", str(scope), "the", "uploader's", "retries"])
+        out = self.route(f'/artifex milestone ART-20 "{scope}" the uploader\'s retries')
+        self.assertEqual((out["files"], out["text"]), ([str(scope.resolve())], "the uploader's retries"))
+        missing = self.docs / "gone.md"
+        out = self.route(f'/artifex milestone ART-20 "{missing}" the uploader\'s retries', expect=2)
+        self.assertIn("path not found", out["error"])
+
+    def test_every_command_init_prints_runs(self):
+        import subprocess
+        files = self.implementation_files()
+        request = "/artifex implementation ART-20 " + " ".join(f'"{p}"' for p in files.values())
+        out = self.init(request, "implementation")
+        self.assertFalse(any(" init --mode" in step for step in out["next"]))
+        self.run_cli("consent", "--status", "authorized", "--question", "q", "--response", "yes")
+        self.run_cli("delivery", "--status", "authorized", "--from-request", "--source", "invocation")
+        ran = 0
+        for step in out["next"]:
+            if not step.startswith("python "):
+                continue
+            argv = st.tokenize(step.replace("<id>", "s1").replace("<ticket>", "ART-20"))
+            result = subprocess.run([sys.executable, *argv[1:]], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, f"{step}\n{result.stderr}")
+            ran += 1
+        self.assertGreaterEqual(ran, 3)
+
     def test_route_reads_every_mode_form_and_writes_nothing(self):
         scope = self.write("scope.md", "scope\n")
         forms = [f'/artifex milestone ART-20 "{scope}"', f'/artifex --mode milestone ART-20 "{scope}"',
