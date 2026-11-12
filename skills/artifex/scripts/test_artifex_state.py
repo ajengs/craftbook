@@ -298,11 +298,19 @@ class ModeTests(unittest.TestCase):
         out = self.route(f"/artifex milestone ART-20 '{self.docs / 'my scope.md'}' add retries", expect=2)
         self.assertIn("path not found", out["error"])
 
+    def test_single_quoted_multiword_scope_and_edge_apostrophes_are_kept(self):
+        for request in ("/artifex milestone ART-20 --scope 'add upload retries'",
+                        "/artifex milestone ART-20 --scope='add upload retries'"):
+            self.assertEqual(st.parse_request(request.split(" ", 1)[1])["text"], "add upload retries")
+        text = st.parse_request("milestone ART-20 'tis the users' retries")["text"]
+        self.assertEqual(text, "'tis the users' retries")
+
     def test_only_absolute_drive_and_dot_paths_are_refused_when_missing(self):
         out = self.route("/artifex milestone ART-20 skills/artifex/scripts/artifex_flow.py and/or retries")
         self.assertEqual((out["files"], out["text"]),
                          ([], "skills/artifex/scripts/artifex_flow.py and/or retries"))
-        for token in ("./gone.md", "../gone.md", "D:\\nowhere\\gone.md", "/nowhere/gone.md"):
+        for token in ("./gone.md", "../gone.md", ".\\gone.md", "..\\gone.md", "\\\\server\\share\\gone.md",
+                      "D:\\nowhere\\gone.md", "/nowhere/gone.md"):
             out = self.route(f"/artifex milestone ART-20 {token}", expect=2)
             self.assertIn("path not found", out["error"])
 

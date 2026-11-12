@@ -351,7 +351,7 @@ REQUEST_FLAGS = {"--mode": "mode", "--ticket": "ticket", "--milestone": "milesto
 TICKET_ID = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
 WEB_LINK = re.compile(r"^https?://", re.IGNORECASE)
 DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
-PATH_PREFIX = re.compile(r"^(?:[\/]|\.{1,2}[\/])")
+PATH_PREFIX = re.compile(r"^(?:[\\/]|\.{1,2}[\\/])")
 
 
 def canonical_mode(value: str) -> str:
@@ -359,6 +359,11 @@ def canonical_mode(value: str) -> str:
     if mode not in MODES:
         raise StateError(f"unknown mode {value!r}; modes: {', '.join(MODES)} (bug is accepted for defect)")
     return mode
+
+
+def unquote(token: str) -> str:
+    """Drop one matching pair of single quotes; an apostrophe on one edge is prose and stays."""
+    return token[1:-1] if len(token) >= 2 and token[0] == token[-1] == "'" else token
 
 
 def tokenize(text: str) -> list:
@@ -388,7 +393,12 @@ def parse_request(text: str, overrides: dict | None = None) -> dict:
                 if i >= len(tokens):
                     raise StateError(f"{name} needs a value")
                 value = tokens[i]
-            flags[REQUEST_FLAGS[name]] = value.strip("'")
+            if value.startswith("'") and unquote(value) == value:
+                close = next((j for j in range(i + 1, len(tokens)) if tokens[j].endswith("'")), None)
+                if close is not None:
+                    value = " ".join([value, *tokens[i + 1:close + 1]])
+                    i = close
+            flags[REQUEST_FLAGS[name]] = unquote(value)
         else:
             rest.append(tokens[i])
         i += 1
@@ -409,15 +419,15 @@ def parse_request(text: str, overrides: dict | None = None) -> dict:
     files, links, words = [], [], []
 
     def place(token: str) -> None:
-        token = token.strip("'")
+        token = unquote(token)
         if WEB_LINK.match(token):
             links.append(token)
         elif Path(token).is_file():
             files.append(str(Path(token).resolve()))
         elif Path(token).is_dir():
             words.append(token)
-        elif DRIVE_PATH.match(token) or PATH_PREFIX.match(token):
-            raise StateError(f"path not found: {token}")
+        elif DRIVE_PATH.match(token.lstrip("'")) or PATH_PREFIX.match(token.lstrip("'")):
+            raise StateError(f"path not found: {token.lstrip(chr(39))}")
         else:
             words.append(token)
 
