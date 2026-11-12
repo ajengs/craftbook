@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -981,7 +982,67 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["runs_without_agent_id"], [])
 
 
+class CompletionReconciliationTests(unittest.TestCase):
+    cli = CliTests.cli
+    result_file = CliTests.result_file
+
+    def test_duplicate_completion_after_resume_does_not_dispatch_twice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.mdir = Path(tmp) / "M1"
+            self.mdir.mkdir()
+            (self.mdir / "results").mkdir()
+            session = af.Session(self.mdir, must_exist=False)
+            session.record({"type": "init", "milestone": "M1", "ticket": "T-1"})
+            handoff = self.mdir / "implementation-handoff.md"
+            handoff.write_text("---\nbranch: b\nworkdir: w\ntarget: main\n---\n", encoding="utf-8")
+            session.record({"type": "handoff", "kind": "implementation", "path": handoff.name,
+                            "sha256": af.file_sha(handoff), "fields": {
+                                "branch": "b", "workdir": "w", "target": "main", "depends_on": []}})
+            p3 = session.respond()["actions"][0]
+            self.cli("event", "started", "--run-id", p3["run_id"], "--agent", "worker")
+            waiting = self.cli("next")["actions"][0]["await_runs"][0]
+            self.assertEqual(waiting["agent"], "worker")
+            self.assertTrue(Path(waiting["result_path"]).is_absolute())
+            path = self.result_file(p3["run_id"], phase="P3", status="completed", head=sha(1),
+                                    pr_url="https://example/pr/1")
+            with patch.object(af, "check_git", return_value=([], {"class": "initial"})):
+                p4 = self.cli("result", path)["actions"][0]
+                repeated = self.cli("result", path)["actions"][0]
+                self.assertEqual(repeated["run_id"], p4["run_id"])
+                self.assertIn("unconfirmed", repeated)
+                self.cli("event", "started", "--run-id", p4["run_id"], "--agent", "reviewer")
+                self.cli("event", "umbrella", "--session", "replacement")
+                self.assertEqual(self.cli("result", path)["checkpoints"], [])
+                (self.mdir / "review.md").write_text("Fix the missing check.", encoding="utf-8")
+                review = self.result_file(p4["run_id"], phase="P4", status="changes_requested", head=sha(1),
+                                          findings=1, artifacts=["review.md"])
+                result = self.cli("result", review)
+                self.assertEqual(result["checkpoints"][0]["kind"], "changes_requested")
+                rework = result["actions"][0]
+                repeated = self.cli("result", review)["actions"][0]
+                self.assertEqual(repeated["run_id"], rework["run_id"])
+                self.assertIn("unconfirmed", repeated)
+                self.cli("event", "started", "--run-id", rework["run_id"], "--agent", "reworker")
+                replay = self.cli("result", review)
+                self.assertEqual(replay["checkpoints"], [])
+                self.assertFalse(any(a["action"] == "spawn" for a in replay["actions"]))
+                events = af.read_events(self.mdir)
+                self.assertEqual(sum(e["type"] == "result" for e in events), 2)
+                self.assertEqual(sum(e["type"] == "dispatched" for e in events), 3)
+                self.result_file(p4["run_id"], phase="P4", status="completed", head=sha(1), artifacts=["review.md"])
+                self.cli("result", review, expect=2)
+
+
 class DispatchConfirmationTests(unittest.TestCase):
+    def test_wait_identifies_agents_and_result_paths_for_completion_reconciliation(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        sim.apply({"type": "started", "run_id": p3["run_id"], "agent": "worker-thread"})
+        action, = sim.step()
+        self.assertEqual(action["await_runs"], [{"run_id": p3["run_id"], "phase": "P3",
+                                               "agent": "worker-thread",
+                                               "result_path": "results/M1-P3-1.json"}])
+
     def test_unconfirmed_spawn_is_printed_again_with_the_same_run_id(self):
         sim = Sim()
         first, = sim.step(start=False)

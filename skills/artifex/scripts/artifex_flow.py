@@ -819,6 +819,12 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
                             "reason": "running: " + ", ".join(sorted(state["active"]))})
         else:
             actions.append({"action": "idle", "reason": idle_reason(state)})
+    waiting = [{"run_id": rid, "phase": run["phase"], "agent": run.get("agent"),
+                "result_path": f"results/{rid}.json"}
+               for rid, run in sorted(state["active"].items()) if run.get("started")]
+    for action in actions:
+        if action["action"] == "wait" and waiting:
+            action["await_runs"] = waiting
     return actions
 
 
@@ -1157,6 +1163,8 @@ class Session:
                 self.record({"type": "dispatched", "run_id": action["run_id"], "phase": action["phase"],
                              "round": action.get("round"), "head": action["inputs"].get("head"),
                              "session_name": action["session_name"]})
+            for run in action.get("await_runs", []):
+                run["result_path"] = str((self.mdir / run["result_path"]).resolve())
             for key in ("result_path", "evidence_dir"):
                 if key in action:
                     action[key] = str((self.mdir / action[key]).resolve())
@@ -1212,6 +1220,13 @@ def cmd_result(args):
     env = load_result_file(Path(args.path))
     run = session.state["active"].get(env["run_id"])
     if run is None:
+        # A delayed completion can arrive again after resume. Only an identical,
+        # accepted envelope is safe to replay; rejected or changed results are not.
+        accepted = next((ev for ev in reversed(session.events)
+                         if ev["type"] == "result" and ev["result"].get("run_id") == env["run_id"]
+                         and (not ev.get("problems") or ev.get("override"))), None)
+        if accepted and accepted["result"] == env:
+            return session.respond(dispatch=not args.dry_run)
         raise FlowError(f"{env['run_id']} is not an active run")
     problems = check_shape(session.state, run, env, args.dir)
     push = None
