@@ -47,7 +47,7 @@ class NotifierTests(unittest.TestCase):
     def sender(self, transport=None):
         return notify.Notifier(self.root, "TASK-1", "alpha", env={"ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL":
                             "https://chat.googleapis.com/v1/spaces/x/messages?key=canary&token=secret"},
-                               clock=self.clock, sleep=self.clock.sleep,
+                               clock=self.clock, rate_clock=self.clock, sleep=self.clock.sleep,
                                transport=transport or self.transport)
 
     def transport(self, url, body, timeout):
@@ -125,6 +125,33 @@ class NotifierTests(unittest.TestCase):
             self.assertLessEqual(db.execute("select count(*) from attempts").fetchone()[0], 10)
         finally:
             db.close()
+
+    def test_persisted_attempt_rate_limit_survives_monotonic_clock_reset(self):
+        url = "https://chat.googleapis.com/v1/spaces/x/messages?key=canary&token=secret"
+        wall_clock = Clock()
+        wall_clock.value = 178023.5
+        first_boot_clock = Clock()
+        first_boot_clock.value = 178023.5
+        first = notify.Notifier(self.root, "TASK-1", "alpha", env={notify.ENV_NAME: url},
+                                clock=first_boot_clock, rate_clock=wall_clock,
+                                sleep=first_boot_clock.sleep, transport=self.transport)
+        self.assertEqual(first.send(self.event("before-reboot")), "sent")
+
+        second_boot_clock = Clock()
+        second_boot_clock.value = 4367.4
+        wall_clock.value += 1.1
+        second = notify.Notifier(self.root, "TASK-1", "alpha", env={notify.ENV_NAME: url},
+                                 clock=second_boot_clock, rate_clock=wall_clock,
+                                 sleep=second_boot_clock.sleep, transport=self.transport)
+        self.assertEqual(second.send(self.event("after-reboot")), "sent")
+        self.assertEqual(len(self.sent), 2)
+        db = sqlite3.connect(self.root / "notifications.sqlite3")
+        try:
+            attempts = [row[0] for row in db.execute("select at from attempts order by at")]
+        finally:
+            db.close()
+        self.assertEqual(len(attempts), 2)
+        self.assertGreaterEqual(attempts[1] - attempts[0], 1.0)
 
     def test_retry_is_bounded_and_respects_attempt_spacing(self):
         attempts = []

@@ -135,10 +135,10 @@ def _supervised_transport(url: str, body: bytes, timeout: float):
 
 class Notifier:
     def __init__(self, root: Path, ticket: str, milestone: str, *, env=None, clock=time.monotonic,
-                 sleep=time.sleep, transport=None):
+                 rate_clock=time.time, sleep=time.sleep, transport=None):
         self.root, self.ticket, self.milestone = Path(root), ticket, milestone
         self.env = os.environ if env is None else env
-        self.clock, self.sleep = clock, sleep
+        self.clock, self.rate_clock, self.sleep = clock, rate_clock, sleep
         self.transport = transport or _supervised_transport
 
     def send(self, event: dict) -> str:
@@ -211,15 +211,15 @@ class Notifier:
 
     def _reserve_attempt(self, db, deadline):
         while True:
-            now = self.clock()
-            if now >= deadline:
+            if self.clock() >= deadline:
                 return None
+            now = self.rate_clock()
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM attempts WHERE at <= ?", (now - 60.0,))
             rows = db.execute("SELECT at FROM attempts ORDER BY at DESC LIMIT 1").fetchone()
             count = db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
             delay = max(0.0, rows[0] + MIN_SPACING - now) if rows else 0.0
-            if count >= MAX_PER_MINUTE or now + delay >= deadline:
+            if count >= MAX_PER_MINUTE or self.clock() + delay >= deadline:
                 db.execute("ROLLBACK")
                 return None
             if delay:
