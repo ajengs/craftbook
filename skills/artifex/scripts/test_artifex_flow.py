@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -670,7 +671,7 @@ class CliTests(unittest.TestCase):
     def cli(self, *args, expect=0):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = af.main([*args[:1], "--dir", str(self.mdir), *args[1:]])
+            code = af.main([*args[:1], "--dir", str(self.mdir), "--host", getattr(self, "host", "other"), *args[1:]])
         self.assertEqual(code, expect, err.getvalue())
         return json.loads(out.getvalue()) if expect == 0 and args[0] != "status" else out.getvalue()
 
@@ -981,7 +982,294 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["runs_without_agent_id"], [])
 
 
+class CodexSessionTests(unittest.TestCase):
+    cli = CliTests.cli
+    result_file = CliTests.result_file
+    host = "codex"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "initiative"
+        self.mdir = self.root / "milestones" / "M1"
+        self.mdir.mkdir(parents=True)
+        self.authorization = {"status": "authorized", "session_creation": "authorized",
+                              "question": "May I create phase and replacement sessions and coordinate?",
+                              "response": "Yes, for this initiative.", "source": "human umbrella turn",
+                              "umbrella_route": "umbrella-original", "date": "2026-11-13"}
+        self.save_consent(self.authorization)
+        self.enterContext(patch.object(af, "target_ahead", return_value=None))
+        self.enterContext(patch.object(af, "check_git", return_value=([], {"class": "initial"})))
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "umbrella-original")
+        self.impl = self.mdir / "implementation-handoff.md"
+        self.impl.write_text("---\nbranch: b\nworkdir: w\ntarget: main\n---\n", encoding="utf-8")
+
+    def save_consent(self, consent):
+        (self.root / "state.json").write_text(json.dumps({"consent": consent, "delivery": {
+            "status": "authorized", "question": "May agents push?", "response": "Yes."}}), encoding="utf-8")
+
+    def start(self):
+        return self.cli("handoff", "--kind", "implementation", str(self.impl))["actions"][0]
+
+    def exercise_phases(self, expected_action):
+        action = self.start()
+        verification = self.mdir / "verification-handoff.md"
+        verification.write_text("---\nauto: [V1]\nmanual: [V2]\n---\n", encoding="utf-8")
+        self.cli("handoff", "--kind", "verification", str(verification))
+        for phase in ("P3", "P4", "P5", "P6"):
+            with self.subTest(phase=phase):
+                self.assertEqual((action["action"], action["phase"]), (expected_action, phase))
+                if expected_action == "create_session":
+                    self.assertEqual(action["tool"], "mcp__codex_app__create_thread")
+                    self.assertEqual(action["report_to"]["threadId"], "umbrella-original")
+                    self.assertIn("send_message_to_thread", action["prompt"])
+                else:
+                    self.assertIsNone(action["tool"])
+                    self.assertNotIn("report_to", action)
+                    self.assertIn("manual relay", action["prompt"])
+                    self.assertNotIn("send_message_to_thread", action["prompt"])
+                self.assertIn(self.authorization["question"], action["prompt"])
+                self.assertIn(self.authorization["response"], action["prompt"])
+                self.assertIn(action["result_path"], action["prompt"])
+                self.assertIn("no further writes", action["prompt"])
+                self.cli("event", "started", "--run-id", action["run_id"], "--agent", phase + "-thread")
+                report = self.mdir / (phase + ".md")
+                report.write_text("Evidence", encoding="utf-8")
+                env = {"phase": phase, "status": "completed", "head": sha(1)}
+                if phase == "P3":
+                    env["pr_url"] = "https://example/pr/1"
+                else:
+                    env["artifacts"] = [report.name]
+                if phase in ("P5", "P6"):
+                    env["scenarios"] = {"V1" if phase == "P5" else "V2": "pass"}
+                path = self.result_file(action["run_id"], **env)
+                out = self.cli("result", path)
+                if phase == "P5":
+                    out = self.cli("event", "trigger-p6")
+                if phase != "P6":
+                    action = out["actions"][0]
+        self.assertFalse(af.Session(self.mdir).state["active"])
+
+    def test_every_codex_phase_uses_a_separate_session_and_verbatim_coordination(self):
+        self.exercise_phases("create_session")
+
+    def test_old_coordination_consent_does_not_grant_session_creation(self):
+        for key in ("session_creation", "question", "response"):
+            with self.subTest(missing=key):
+                consent = dict(self.authorization)
+                del consent[key]
+                self.save_consent(consent)
+                action = self.start()
+                self.assertEqual(action["action"], "wait")
+                self.assertIn("authorization", action["reason"])
+                self.assertEqual(af.Session(self.mdir).state["seq"].get("P3", 0), 0)
+
+    def test_declined_creation_supports_manual_sessions_through_all_phases(self):
+        self.save_consent(dict(self.authorization, session_creation="declined"))
+        self.exercise_phases("manual_session")
+
+    def test_declined_coordination_uses_manual_result_relay_for_all_phases(self):
+        self.save_consent(dict(self.authorization, status="declined"))
+        self.exercise_phases("manual_session")
+
+    def test_reprinting_manual_handoff_does_not_dispatch_another_run(self):
+        self.save_consent(dict(self.authorization, session_creation="declined"))
+        first = self.start()
+        repeated = self.cli("next")["actions"][0]
+        self.assertEqual(repeated["action"], "manual_session")
+        self.assertEqual(repeated["run_id"], first["run_id"])
+        self.assertIn("unconfirmed", repeated)
+        self.assertEqual(af.Session(self.mdir).state["seq"]["P3"], 1)
+
+    def test_codex_without_initiative_state_reports_the_required_initialization(self):
+        (self.root / "state.json").unlink()
+        action = self.start()
+        self.assertEqual(action["action"], "wait")
+        self.assertIn("state.json is required", action["reason"])
+        self.assertIn("artifex_state.py init", action["reason"])
+        self.assertNotIn("consent --", action["reason"])
+        self.assertFalse(af.Session(self.mdir).state["active"])
+
+    def test_resume_updates_report_route_without_creating_a_second_session(self):
+        first = self.start()
+        repeat = self.cli("next")["actions"][0]
+        self.assertEqual(repeat["run_id"], first["run_id"])
+        self.assertIn("unconfirmed", repeat)
+        resumed = self.cli("event", "umbrella", "--session", "umbrella-new")["actions"][0]
+        self.assertEqual(resumed["report_to"]["threadId"], "umbrella-new")
+        self.assertEqual(af.Session(self.mdir).state["seq"]["P3"], 1)
+
+    def test_recording_combined_consent_releases_a_held_creation(self):
+        self.save_consent({"status": "authorized", "question": "Messages?", "response": "yes"})
+        self.assertEqual(self.start()["action"], "wait")
+        self.save_consent(self.authorization)
+        self.assertEqual(self.cli("next")["actions"][0]["action"], "create_session")
+
+    def test_codex_creation_dry_run_does_not_record_dispatch(self):
+        out = self.cli("handoff", "--kind", "implementation", str(self.impl), "--dry-run")
+        self.assertEqual(out["actions"][0]["action"], "create_session")
+        self.assertFalse(af.Session(self.mdir).state["active"])
+
+    def test_review_findings_create_one_rework_session_on_duplicate_completion(self):
+        p3 = self.start()
+        path = self.result_file(p3["run_id"], phase="P3", status="completed", head=sha(1),
+                                pr_url="https://example/pr/1")
+        p4 = self.cli("result", path)["actions"][0]
+        (self.mdir / "review.md").write_text("A blocking finding", encoding="utf-8")
+        path = self.result_file(p4["run_id"], phase="P4", status="changes_requested", head=sha(1),
+                                findings=1, artifacts=["review.md"])
+        rework = self.cli("result", path)["actions"][0]
+        repeat = self.cli("result", path)["actions"][0]
+        self.assertEqual((rework["action"], rework["phase"]), ("create_session", "P3"))
+        self.assertEqual(repeat["run_id"], rework["run_id"])
+        self.assertEqual(af.Session(self.mdir).state["seq"]["P3"], 2)
+
+    def test_detected_codex_uses_the_same_session_transport_without_override(self):
+        first = self.start()
+        out = io.StringIO()
+        with patch.object(af, "detect_host", return_value={"host": "codex"}), contextlib.redirect_stdout(out):
+            self.assertEqual(af.main(["next", "--dir", str(self.mdir)]), 0)
+        repeat = json.loads(out.getvalue())["actions"][0]
+        self.assertEqual((repeat["action"], repeat["run_id"]), ("create_session", first["run_id"]))
+
+    def test_other_hosts_keep_subagent_dispatch(self):
+        self.host = "claude-code"
+        self.assertEqual(self.start()["action"], "spawn")
+
+
+class CompletionReconciliationTests(unittest.TestCase):
+    cli = CliTests.cli
+    result_file = CliTests.result_file
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mdir = Path(self.tmp.name) / "M1"
+        self.mdir.mkdir()
+        (self.mdir / "results").mkdir()
+        session = af.Session(self.mdir, must_exist=False)
+        session.record({"type": "init", "milestone": "M1", "ticket": "T-1"})
+        handoff = self.mdir / "implementation-handoff.md"
+        handoff.write_text("---\nbranch: b\nworkdir: w\ntarget: main\n---\n", encoding="utf-8")
+        session.record({"type": "handoff", "kind": "implementation", "path": handoff.name,
+                        "sha256": af.file_sha(handoff), "fields": {
+                            "branch": "b", "workdir": "w", "target": "main", "depends_on": []}})
+        self.p3 = session.respond(host="other")["actions"][0]
+        self.cli("event", "started", "--run-id", self.p3["run_id"], "--agent", "worker")
+        self.path = self.result_file(self.p3["run_id"], phase="P3", status="completed", head=sha(1),
+                                     pr_url="https://example/pr/1")
+        self.git_check = self.enterContext(patch.object(af, "check_git", return_value=([], {"class": "initial"})))
+
+    def start_review(self):
+        p4 = self.cli("result", self.path)["actions"][0]
+        self.cli("event", "started", "--run-id", p4["run_id"], "--agent", "reviewer")
+        (self.mdir / "review.md").write_text("Fix the missing check.", encoding="utf-8")
+        return p4, self.result_file(p4["run_id"], phase="P4", status="changes_requested", head=sha(1),
+                                    findings=1, artifacts=["review.md"])
+
+    def test_duplicate_implementation_completion_after_resume_does_not_dispatch_twice(self):
+        p4 = self.cli("result", self.path)["actions"][0]
+        repeated = self.cli("result", self.path)["actions"][0]
+        self.assertEqual(repeated["run_id"], p4["run_id"])
+        self.assertIn("unconfirmed", repeated)
+        self.cli("event", "started", "--run-id", p4["run_id"], "--agent", "reviewer")
+        self.cli("event", "umbrella", "--session", "replacement")
+        replay = self.cli("result", self.path)
+        self.assertEqual(replay["checkpoints"], [])
+        self.assertFalse(any(a["action"] == "spawn" for a in replay["actions"]))
+        self.assertEqual(sum(e["type"] == "result" for e in af.read_events(self.mdir)), 1)
+
+    def test_duplicate_review_findings_do_not_dispatch_rework_twice(self):
+        _, review = self.start_review()
+        result = self.cli("result", review)
+        self.assertEqual(result["checkpoints"][0]["kind"], "changes_requested")
+        rework = result["actions"][0]
+        repeated = self.cli("result", review)["actions"][0]
+        self.assertEqual(repeated["run_id"], rework["run_id"])
+        self.assertIn("unconfirmed", repeated)
+        self.cli("event", "started", "--run-id", rework["run_id"], "--agent", "reworker")
+        replay = self.cli("result", review)
+        self.assertEqual(replay["checkpoints"], [])
+        self.assertFalse(any(a["action"] == "spawn" for a in replay["actions"]))
+        events = af.read_events(self.mdir)
+        self.assertEqual(sum(e["type"] == "result" for e in events), 2)
+        self.assertEqual(sum(e["type"] == "dispatched" for e in events), 3)
+
+    def test_changed_result_for_closed_run_is_refused_without_recording(self):
+        p4, review = self.start_review()
+        self.cli("result", review)
+        changed = self.result_file(p4["run_id"], phase="P4", status="completed", head=sha(1), artifacts=["review.md"])
+        before = af.read_events(self.mdir)
+        self.cli("result", changed, expect=2)
+        self.assertEqual(af.read_events(self.mdir), before)
+
+    def test_override_accepted_result_can_be_replayed_without_revalidation(self):
+        self.git_check.return_value = (["remote unavailable"], {"class": "initial"})
+        first = self.cli("result", self.path, "--override", "User accepted the remote check failure")
+        self.assertEqual(first["actions"][0]["phase"], "P4")
+        before = af.read_events(self.mdir)
+        self.git_check.reset_mock()
+        replay = self.cli("result", self.path)
+        self.assertEqual(replay["checkpoints"], [])
+        self.assertEqual(replay["actions"][0]["run_id"], first["actions"][0]["run_id"])
+        self.assertEqual(af.read_events(self.mdir), before)
+        self.git_check.assert_not_called()
+
+    def test_rejected_result_cannot_be_replayed_after_run_failed(self):
+        self.git_check.return_value = (["remote unavailable"], None)
+        self.assertEqual(self.cli("result", self.path)["actions"][0]["action"], "halted")
+        self.cli("event", "run-failed", "--run-id", self.p3["run_id"], "--reason", "agent ended")
+        before = af.read_events(self.mdir)
+        self.cli("result", self.path, expect=2)
+        self.assertEqual(af.read_events(self.mdir), before)
+
+
 class DispatchConfirmationTests(unittest.TestCase):
+    def reviewing(self):
+        sim = Sim()
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], head=sha(1), push="initial")
+        p4, = sim.spawned()
+        return sim, p4
+
+    def test_phase_specific_waits_do_not_monitor_unrelated_runs(self):
+        for blocker in ("dependency", "delivery", "handoff"):
+            with self.subTest(blocker=blocker):
+                sim, _ = self.reviewing()
+                sim.apply({"type": "poll", "kind": "ci", "outcome": "failing", "head": sha(1)})
+                delivery, hash_of = None, None
+                if blocker == "dependency":
+                    fields = dict(sim.state["handoffs"]["implementation"]["fields"], depends_on=["M0 merged"])
+                    sim.apply({"type": "handoff", "kind": "implementation", "path": "implementation-handoff.md",
+                               "sha256": "j" * 64, "fields": fields})
+                elif blocker == "delivery":
+                    delivery = {"status": "declined"}
+                else:
+                    hash_of = lambda path: "changed"
+                action, = af.next_actions(sim.state, hash_of=hash_of, delivery=delivery)
+                self.assertEqual((action["action"], action["phase"]), ("wait", "P3"))
+                self.assertNotIn("await_runs", action)
+
+    def test_running_wait_does_not_request_native_polling(self):
+        sim, p4 = self.reviewing()
+        sim.apply({"type": "poll", "kind": "ci", "outcome": "failing", "head": sha(1)})
+        p3, = sim.spawned()
+        sim.apply({"type": "started", "run_id": p3["run_id"], "agent": "ci-worker"})
+        action, = sim.step()
+        self.assertEqual(action["phase"], None)
+        self.assertNotIn("await_runs", action)
+
+    def test_halt_preserves_a_live_reviewer_without_dispatching_more_work(self):
+        sim, p4 = self.reviewing()
+        sim.apply({"type": "poll", "kind": "ci", "outcome": "failing", "head": sha(1)})
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], "blocked", summary="Push denied")
+        self.assertEqual(list(sim.state["active"]), [p4["run_id"]])
+        action, = sim.step()
+        self.assertEqual(action["action"], "halted")
+        self.assertNotIn("await_runs", action)
+        self.assertIn(p4["run_id"], af.render_status(sim.state))
+
     def test_unconfirmed_spawn_is_printed_again_with_the_same_run_id(self):
         sim = Sim()
         first, = sim.step(start=False)

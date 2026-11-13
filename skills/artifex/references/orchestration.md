@@ -6,9 +6,9 @@ Who decides what:
 
 - **Router:** which agent runs next, the review round and rework caps, push classification, retries after a failed run, and checking each agent result against its artifacts and the remote before acting on it.
 - **Umbrella:** what the user sees, approvals, design decisions, routes back to P2, P1 or D1, inconclusive results, and every halt.
-- **Agents:** their scoped work. Each one writes a result file and returns only that file's path.
+- **Agents:** their scoped work. Each writes a finalized result file and reports its path through the host completion channel.
 
-The router doesn't spawn agents. Only the umbrella's harness can, so a `spawn` action is an instruction for the umbrella to carry out word for word. It needs Python 3.10+ and git 2.36+, and nothing else.
+The router launches nothing. On Codex it prints `create_session` instructions for independent chats or `manual_session` handoffs after declined consent; on other hosts it retains `spawn`, so a `spawn` action is an instruction for the umbrella to carry out word for word. The umbrella carries out the returned action and records the actual session/agent id. It needs Python 3.10+ and git 2.36+, and nothing else.
 
 ## Files
 
@@ -23,17 +23,19 @@ Each file has one writer. Never edit `run.jsonl` by hand; record an event instea
 
 ## Umbrella loop
 
-Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. Every command except `status` prints `{"checkpoints": [...], "actions": [...]}`.
+Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folder>`. Every command except `status`/`runs` prints `{"checkpoints": [...], "actions": [...]}`.
 
 1. **Start the milestone:** `init --milestone M1 --ticket PROJ-123 --umbrella-session <id>` once, then `handoff --kind implementation <path>` right after the implementation handoff is written. The first implementation handoff returns a `compact_umbrella` checkpoint: everything P1 and P2 settled is on disk by then, so compact the umbrella if the host lets it, or post the suggestion to the user (`SKILL.md`, Execution efficiency). Record `handoff --kind verification <path>` once the verification handoff exists. For a bug, the diagnosis is recorded as the verification handoff.
 2. **Carry out the actions in order:**
-   - `spawn`: start a sub agent with the given `agent`, `session_name` and `workflow`. P3, P5 and P6 spawns carry `inputs.delivery_authorization`, the user's verbatim answer from `state.json`: that is the permission to branch, commit, push and open the PR, so don't ask the user again before spawning. Pass `inputs`, `result_path` and, for P5 or P6, `evidence_dir` as its coordination brief, next to the handoff reference. Don't add to them. Once the harness confirms the agent is running, record `event started --run-id <id> --agent <harness id>`; chain it with your next router call rather than spending a turn on it. Pass `--agent` whenever the harness returns an id: it is how that run's cost is found later. In Claude Code it is the agent id the Agent tool returns, whose transcript is `~/.claude/projects/<project>/<umbrella session>/subagents/agent-<id>.jsonl`; in Codex it is the thread id. If the spawn fails, record `event run-failed --run-id <id> --reason <why>`.
-   - `spawn` with `unconfirmed`: the router printed this run before and never got `started`. If the agent is in fact running, record `started`; if it never started, spawn it now; if it can't be started, record `run-failed`. The router never assumes a printed spawn happened, so a lost spawn can't leave it waiting forever.
-   - `wait`: nothing to do. The reason says what it is waiting on.
+   - `create_session` (Codex): call the named `mcp__codex_app__create_thread` with the returned `session_name` as title, the complete `prompt` unchanged and the confirmed project/workspace. The prompt contains the assigned inputs, result/evidence paths, user's verbatim initiative authorization and `report_to` umbrella route. `role_config` is model/effort guidance, not native subagent selection. Record the returned independent thread id with `event started --run-id <id> --agent <thread id>`. Do not spawn a native subagent for the phase. Creation and replacement are covered by the one-time initiative authorization; do not ask before each call. If creation fails, record `event run-failed` with the actual reason.
+   - `manual_session` (Codex, declined creation or coordination): this is a registered run, not permission for the umbrella to create or message a chat. Give the user its session name and complete prompt to launch manually. Record `event started --run-id <id> --agent <user-supplied thread id>` when they confirm the session; if no id is available, record the start without it and retain the cost-report limitation. The worker uses human relay rather than a cross-session callback. When the user supplies its finalized result path, run `result <path>` normally. This works for P3, P4, P5 and P6; the latter still needs its explicit trigger. Reprinted unconfirmed handoffs keep the same run id.
+   - `spawn` (other hosts): start the returned isolated worker using its role, inputs and workflow, and record `event started --agent <harness id>`. P3/P5/P6 inputs carry the verbatim `delivery_authorization`; creating a session does not add permission to commit or push.
+   - An action with `unconfirmed` means an automatic launch or manual handoff was printed but no start was recorded. Check the recorded session name, run id and host inventory. If it exists, record its id; if it never started, perform the returned creation/spawn once; otherwise record the launch failure. Never create a duplicate just because a response or message was lost.
+   - `wait`: the reason names a running phase or a prerequisite. On Codex, handle actionable prerequisites and independent work, then end the turn. A phase's authorized cross-session completion message resumes the umbrella. Do not use native agent waits, sleep loops, heartbeat messages or repeated status polling to keep the umbrella active.
    - `idle`: nothing is queued. Wait for a poll result, a user trigger or sign-off.
    - `halted`: handle every listed reason with the user (see Exceptions), then record `event resume`.
    - `done`: the milestone is closed.
-3. **When an agent returns a path:** run `result <path>`, then go back to step 2.
+3. **When an agent returns a path:** run `result <path>`, post its `post: true` checkpoints (including verdict and report links), then carry out its actions in the same turn. Agent execution completing does not mean review passed. P3 completion starts P4 without waiting for CI or the verification handoff; P4 findings start the returned rework. Apply the host completion rule below when more work remains; ending the umbrella turn while phase sessions run is not workflow completion.
 4. **Post** each checkpoint with `post: true`, as one line or as the results it points to. Checkpoints with `post: false` are already in `run.jsonl`: don't post them and don't copy them into `state.json` (`SKILL.md`, Reporting to the user).
 5. **After each poll:** `event poll --kind ci --outcome passing|failing|pending|none --head <sha>` (`none`: the repository has no CI at all, so the router stops waiting on it), or `event poll --kind threads --ids <thread>:<last comment id> ...` with every unresolved thread. The router queues a fix only for threads it hasn't dispatched in that version. The umbrella still schedules and runs the polls (`SKILL.md`, Polling belongs to the umbrella).
 6. **On user decisions the router can't see:**
@@ -42,10 +44,25 @@ Run every command with `python <skill>/scripts/artifex_flow.py <command> --dir <
    - `event close --note <sign-off>` after the user signs off
 7. **When the umbrella is resumed or replaced:** run `event umbrella --session <id>` first, on every open milestone. Each recorded session id, together with the timestamps in `run.jsonl`, lets the umbrella's tokens be sliced per transition later. `<id>` is the umbrella's own session or thread id: in Claude Code the transcript file name under `~/.claude/projects/`, in Codex the thread id. If it isn't known, leave it out and note that with `artifex_state.py decide`. Recording the same id twice in a row is a no-op. `runs` lists every umbrella session and run with its window and agent id, and names any run recorded without an agent id.
 
-**Measuring cost.** `python <skill>/scripts/artifex_cost.py --dir <milestone folder> [--json]` reads `runs`, finds each transcript on Claude Code (`~/.claude/projects/`) or Codex (`~/.codex/sessions/`, `~/.codex/archived_sessions/`), and reports turns and tokens (uncached input, cache read, cache write, output) for the umbrella per window between router events, for each agent run, and for each phase session in `state.json`. A run logged without an agent id is matched among the umbrella's own sub agents by its session name, then by its time window; the report says which match it used and lists whatever it couldn't find. Codex totals are running sums, so the script turns them into per-turn differences; its input counts include cached tokens, which the script separates out.
-8. **When the user asks where things stand:** `status` covers one milestone; `artifex_state.py render` covers the initiative with every milestone's router status, and `render --out <initiative folder>/STATE.md` writes it as a file.
+**Completion evidence.** When investigating a missed handoff, capture the host's completion and delivery timestamps and the umbrella turn/wake time when available, alongside the router result and started events. Record unavailable timestamps as unknown. The router cannot measure delivery or wake-up, and this loop is not a background scheduler.
+
+**Measuring cost.** `python <skill>/scripts/artifex_cost.py --dir <milestone folder> [--json]` reads `runs`, finds each transcript on Claude Code (`~/.claude/projects/`) or Codex (`~/.codex/sessions/`, `~/.codex/archived_sessions/`), and reports turns and tokens (uncached input, cache read, cache write, output) for the umbrella per window between router events, for each agent run, and for each phase session in `state.json`. A legacy native run logged without an agent id may be matched among the umbrella's subagents by name or time window; an independent phase chat needs its actual thread id recorded, and missing identities remain explicit measurement gaps; the report says which match it used and lists whatever it couldn't find. Codex totals are running sums, so the script turns them into per-turn differences; its input counts include cached tokens, which the script separates out.
+8. **Reconcile on every wake:** consume cross-session checkpoints/results before unrelated coordination or a status answer. On resume, read `runs` for run ids with `ended: null`, their recorded thread ids and start confirmations, even during a halt. Use `next` for routing and unconfirmed creations; a halt suppresses all new launches but does not prevent accepting an existing worker's result. A finalized result message is the publication boundary, even if the sender is still finishing its reporting call: no further code/artifact writes are allowed after publication. If recovering a file without a completion message, confirm with the owning session that it is finalized, or that the session ended, before consuming it. A failed/ended session with no usable result uses `event run-failed`; a rejected result remains an explicit blocker. Do not infer readiness merely from a file appearing. If the cross-session send fails, retain the result and report manual relay as the blocker. An identical accepted envelope can be replayed safely; a changed result for a closed run is refused. Check inventory before acting on an unconfirmed launch returned by replay. Recover an unreported verdict from the accepted result/artifacts in the log; replay does not repost old checkpoints.
+9. **When the user asks where things stand:** `status` covers one milestone; `artifex_state.py render` covers the initiative with every milestone's router status, and `render --out <initiative folder>/STATE.md` writes it as a file.
 
 `--dry-run` prints actions without recording dispatches. Use it for a look ahead.
+
+## Host completion rules
+
+- **Codex:** all phases are independent top-level chats. `create_session` is printed only when the initiative's verbatim consent record authorizes both phase/replacement-session creation (`session_creation: authorized`) and coordination (`status: authorized`). A missing/old record asks for the expanded authorization once; a declined record selects a registered `manual_session` handoff and human result relay. End the umbrella turn after its current coordination work. Phase sessions publish finalized results through `mcp__codex_app__send_message_to_thread`, which resumes an idle umbrella. This uses independent-session communication; native child-to-ancestor messaging is not an alternative.
+- **Claude Code:** preserve foreground Agent completion and background completion notifications; the latter arrive in a later turn. Separate planning sessions keep their existing cross-session channel. No Codex-style native-wait loop is required. See [Claude Code completion notifications](https://code.claude.com/docs/en/sub-agents#tools-permissions-and-results-of-background-subagents).
+- **Other hosts:** retain their scoped workers and actual completion channel; if it is unavailable, report the limitation and use manual relay.
+
+When upgrading an existing Codex initiative, obtain the expanded creation/coordination authorization once and reconcile any already-active native runs through their existing result/recovery channel. Do not convert an active native run into a second chat or claim it can send to its native ancestor. New dispatches use independent sessions.
+
+Codex dispatch requires an initiative `state.json`; router-only Codex operation is unsupported because phase creation/coordination must be tied to the recorded human decision. If it is absent, initialize the initiative with `artifex_state.py init` before recording consent and starting phases. Other-host router-only behavior is unchanged.
+
+`--host codex|claude-code|other` overrides host detection for testing or a host without detectable environment variables. It changes dispatch transport, not phase gates. A returned action is not evidence that its session was created or a message delivered. Exercise the actual phase chain and failure recovery on the target host; neither the script nor cross-session messaging guarantees continuation after the app/session closes.
 
 ## Command cheat sheet
 
@@ -55,11 +72,11 @@ Prefix: `python <skill>/scripts/artifex_flow.py <command> --dir <milestone folde
 |---|---|
 | `init --milestone <id> --ticket <id> --umbrella-session <id> [--code-pattern <regex>] [--doc-pattern <glob>]` | Once per milestone |
 | `handoff --kind implementation\|verification <path>` | A handoff (or diagnosis) is written or changed |
-| `result <path> [--override "<reason>"]` | An agent returned its result file path |
+| `result <path> [--override "<reason>"]` | An agent returned its result file path; identical accepted envelopes are safe to replay |
 | `next [--dry-run]` | Nothing new happened and you want the actions again |
 | `status` | The user asks about one milestone |
-| `runs` | Measuring cost: every run with its agent id and time window, and each umbrella session with its window |
-| `event started --run-id <id> [--agent <harness id>]` | A printed spawn is confirmed running |
+| `runs` | Recovering session routes, or measuring cost: every run with its agent id and time window, and each umbrella session with its window |
+| `event started --run-id <id> [--agent <harness id>]` | An automatic or manual phase session/worker is confirmed running |
 | `event run-failed --run-id <id> [--reason "<why>"]` | A spawn failed, or an agent ended without a result file |
 | `event poll --kind ci --outcome passing\|failing\|pending\|none [--head <sha>]` | After a CI poll |
 | `event poll --kind threads [--ids <thread>:<comment> ...]` | After a PR-thread poll, with every unresolved thread |
@@ -98,7 +115,7 @@ When a recorded handoff file changes, the router stops dispatching anything that
 
 ## Result file
 
-Every P3–P6 agent writes this JSON to the `result_path` it was given and returns only that path:
+Every P3–P6 worker writes this JSON to its assigned `result_path`. On Codex, it then reports the finalized path by cross-session message; other hosts return it through their completion channel:
 
 ```json
 {
@@ -132,6 +149,10 @@ Phase verdicts map to statuses like this:
 - **P5, P6:** `pass` → `completed`; `fail` → `changes_requested`.
 
 In a result file, `blocked` means the agent couldn't make progress, not that review findings block the merge.
+
+## Result delivery
+
+On Codex, finish all changes and evidence first, write the complete result file, and make no further code or artifact writes after publishing it. For `manual_session`, give the user the finalized path to relay; do not send coordination messages. The umbrella records the relayed result with the same `result` command and validation as automatic completion. For authorized automatic sessions, follow the message protocol below. Send the umbrella a single completion/checkpoint containing `run_id`, `phase` and the absolute finalized result path with `mcp__codex_app__send_message_to_thread`. Use the direct human authorization carried in the prompt, and refresh the latest umbrella route from `runs` before sending. The sender does not submit the result or edit shared state. The umbrella runs `result <path>`, posts the verdict/report and performs the returned actions. Report blocked/needs-decision outcomes too. Retain the result and record the exact blocker if the send is rejected; do not switch tools or poll to bypass it. End the phase session with the result path. A duplicate message is reconciled through the existing replay checks, not by launching another worker.
 
 ## What the router checks before acting
 

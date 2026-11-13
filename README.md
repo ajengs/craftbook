@@ -28,7 +28,7 @@ See [`INSTALL.md`](INSTALL.md) for Linux, macOS and Windows, Claude Code, Claude
 | PR reviewer | `pr-review-pipeline` from this repo | Review by hand: coverage against the approved specs, correctness, unjustified complexity and scope expansion |
 | PR feedback handler | Any handler you have installed | `standards/pr-feedback.md` |
 | Document system for review drafts | A commentable document or artifact system | Markdown files |
-| Sub agents and session creation | Whatever your environment provides | The umbrella prepares a brief and asks you to start the session |
+| Phase sessions and optional native helpers | Whatever your environment provides | The umbrella prepares a brief and asks you to start the session |
 
 ## Layout
 
