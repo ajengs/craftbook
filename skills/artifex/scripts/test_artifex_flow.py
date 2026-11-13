@@ -1011,20 +1011,26 @@ class CodexSessionTests(unittest.TestCase):
     def start(self):
         return self.cli("handoff", "--kind", "implementation", str(self.impl))["actions"][0]
 
-    def test_every_codex_phase_uses_a_separate_session_and_verbatim_coordination(self):
+    def exercise_phases(self, expected_action):
         action = self.start()
         verification = self.mdir / "verification-handoff.md"
         verification.write_text("---\nauto: [V1]\nmanual: [V2]\n---\n", encoding="utf-8")
         self.cli("handoff", "--kind", "verification", str(verification))
         for phase in ("P3", "P4", "P5", "P6"):
             with self.subTest(phase=phase):
-                self.assertEqual((action["action"], action["phase"]), ("create_session", phase))
-                self.assertEqual(action["tool"], "mcp__codex_app__create_thread")
-                self.assertEqual(action["report_to"]["threadId"], "umbrella-original")
+                self.assertEqual((action["action"], action["phase"]), (expected_action, phase))
+                if expected_action == "create_session":
+                    self.assertEqual(action["tool"], "mcp__codex_app__create_thread")
+                    self.assertEqual(action["report_to"]["threadId"], "umbrella-original")
+                    self.assertIn("send_message_to_thread", action["prompt"])
+                else:
+                    self.assertIsNone(action["tool"])
+                    self.assertNotIn("report_to", action)
+                    self.assertIn("manual relay", action["prompt"])
+                    self.assertNotIn("send_message_to_thread", action["prompt"])
                 self.assertIn(self.authorization["question"], action["prompt"])
                 self.assertIn(self.authorization["response"], action["prompt"])
                 self.assertIn(action["result_path"], action["prompt"])
-                self.assertIn("send_message_to_thread", action["prompt"])
                 self.assertIn("no further writes", action["prompt"])
                 self.cli("event", "started", "--run-id", action["run_id"], "--agent", phase + "-thread")
                 report = self.mdir / (phase + ".md")
@@ -1044,6 +1050,9 @@ class CodexSessionTests(unittest.TestCase):
                     action = out["actions"][0]
         self.assertFalse(af.Session(self.mdir).state["active"])
 
+    def test_every_codex_phase_uses_a_separate_session_and_verbatim_coordination(self):
+        self.exercise_phases("create_session")
+
     def test_old_coordination_consent_does_not_grant_session_creation(self):
         for key in ("session_creation", "question", "response"):
             with self.subTest(missing=key):
@@ -1055,11 +1064,31 @@ class CodexSessionTests(unittest.TestCase):
                 self.assertIn("authorization", action["reason"])
                 self.assertEqual(af.Session(self.mdir).state["seq"].get("P3", 0), 0)
 
-    def test_declined_creation_is_manual_and_does_not_ask_again(self):
+    def test_declined_creation_supports_manual_sessions_through_all_phases(self):
         self.save_consent(dict(self.authorization, session_creation="declined"))
+        self.exercise_phases("manual_session")
+
+    def test_declined_coordination_uses_manual_result_relay_for_all_phases(self):
+        self.save_consent(dict(self.authorization, status="declined"))
+        self.exercise_phases("manual_session")
+
+    def test_reprinting_manual_handoff_does_not_dispatch_another_run(self):
+        self.save_consent(dict(self.authorization, session_creation="declined"))
+        first = self.start()
+        repeated = self.cli("next")["actions"][0]
+        self.assertEqual(repeated["action"], "manual_session")
+        self.assertEqual(repeated["run_id"], first["run_id"])
+        self.assertIn("unconfirmed", repeated)
+        self.assertEqual(af.Session(self.mdir).state["seq"]["P3"], 1)
+
+    def test_codex_without_initiative_state_reports_the_required_initialization(self):
+        (self.root / "state.json").unlink()
         action = self.start()
         self.assertEqual(action["action"], "wait")
-        self.assertIn("manual", action["reason"])
+        self.assertIn("state.json is required", action["reason"])
+        self.assertIn("artifex_state.py init", action["reason"])
+        self.assertNotIn("consent --", action["reason"])
+        self.assertFalse(af.Session(self.mdir).state["active"])
 
     def test_resume_updates_report_route_without_creating_a_second_session(self):
         first = self.start()

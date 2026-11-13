@@ -1,6 +1,6 @@
 # P6 — Manual verification
 
-**Codex execution:** The umbrella creates a separate top-level phase chat under the initiative's one-time creation/coordination authorization. This phase is not a native subagent. Finalize all writes, then report the result path through the cross-session channel in `references/orchestration.md`, Result delivery. Other hosts keep their existing isolated-worker mechanism.
+**Codex execution:** The umbrella creates a separate top-level phase chat under the initiative's one-time creation/coordination authorization. This phase is not a native subagent. Finalize all writes, then report the result path through the cross-session channel in `references/orchestration.md`, Result delivery. If creation or coordination was declined, the user launches the router's `manual_session` handoff and relays its result path. Other hosts keep their existing isolated-worker mechanism.
 
 **Entry:** Passing review **and** user-approved verification contract, reconciled to the latest approved specs. For a bug, the diagnosis replaces the contract and the handoff, and a manual reproduction is its manual scenario (`workflows/D1-bug-investigation.md`, Verification). P5 has finished or is not applicable. **Owner:** Verification agent; user signs off closure.
 

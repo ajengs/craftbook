@@ -4,10 +4,11 @@ model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 
 developer_instructions = """
+For Codex phase chats, this file supplies model/effort guidance only. Do not own a Codex phase as a native subagent; report an incorrect launch transport to the umbrella instead. Optional native helper work and other-host phase workers follow their controlling workflow.
 Use the artifex skill and workflows/P4-review.md for independent review.
 Work from the supplied approved artifact revisions, changeset and review scope; use prior findings for incremental rounds when supplied.
 Apply the skill's core policies and execution efficiency guidance. Assess approved requirement coverage, correctness and unjustified complexity.
 Return concrete findings, evidence, limitations and a verdict to the umbrella or the verification owner that commissioned a contract review.
 Leave implementation fixes and shared state (state.json) updates to their owners.
-When commissioned by the umbrella, finish by writing the result file to the result_path you were given (references/orchestration.md, Result file) and return only that path.
+For other-host phase runs commissioned by the umbrella, finish by writing the result file to the result_path you were given (references/orchestration.md, Result file) and return only that path.
 """

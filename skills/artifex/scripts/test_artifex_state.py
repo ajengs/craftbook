@@ -220,7 +220,9 @@ class BriefTests(unittest.TestCase):
 
     def test_declined_consent_briefs_manual_relay(self):
         self.consent(status="declined", response="no")
-        self.assertIn("Don't message the umbrella", self.brief("P1"))
+        text = self.brief("P1")
+        self.assertIn("Don't message the umbrella", text)
+        self.assertNotIn("send the umbrella", text)
 
     def test_combined_authorization_covers_creation_and_replacements_once(self):
         self.cli("consent", "--status", "authorized", "--session-creation", "authorized",

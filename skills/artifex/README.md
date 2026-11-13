@@ -26,6 +26,8 @@ One umbrella session coordinates six phases, plus a bug track. The invocation pi
 
 `milestone` mode starts at P2 from a scope you give as a file, a link or a description. `implementation` mode starts at the router when you supply the specs, the verification contract and both handoffs, and at a short P2 when you supply some of them or only context.
 
+On Codex, every phase and replacement is a separate top-level chat; one initiative-start authorization covers creation and scoped coordination. Authorized result messages resume the umbrella; declined consent uses registered manual handoffs and human relay. Native subagent waiting is not the phase-completion mechanism.
+
 Several P2 sessions can be active at once, one per milestone or ad hoc analysis. Each hands its work to the umbrella, which runs the implementation and verification phase workers.
 
 Approvals are tied to a specific revision of a specific artifact. Closing a milestone always needs your explicit sign-off.

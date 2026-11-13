@@ -668,7 +668,7 @@ def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: st
         f"`{cmd} show`.",
         "",
         "First steps:",
-        f"1. Run `{cmd} host` and send the umbrella its `session_id` with your first message.",
+        f"1. Run `{cmd} host` and report its `session_id` through the authorized channel or human relay.",
         f"2. Before drafting the {first_doc}, run `{cmd} doc surface {doc_arg}` and follow what it prints.",
     ]
     if milestone:

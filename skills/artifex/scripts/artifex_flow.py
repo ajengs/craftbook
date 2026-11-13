@@ -1117,22 +1117,25 @@ def load_siblings(mdir: Path) -> list:
 
 def codex_session_action(session, action, initiative):
     """Adapt a router dispatch to the independent-chat transport; launch nothing here."""
+    if initiative is None:
+        return _wait(action["phase"], f"initiative state.json is required for Codex phase sessions at "
+                     f"{session.mdir.resolve().parent.parent}; initialize it with artifex_state.py init first")
     consent = initiative.get("consent") or {}
-    if consent.get("session_creation") == "declined" or consent.get("status") in ("declined", "manual relay"):
-        return _wait(action["phase"], "session creation/coordination declined; use manual phase creation and relay")
-    if consent.get("session_creation") != "authorized" or consent.get("status") != "authorized" \
-            or not consent.get("question") or not consent.get("response"):
+    manual = consent.get("session_creation") == "declined" or consent.get("status") in ("declined", "manual relay")
+    if not manual and (consent.get("session_creation") != "authorized" or consent.get("status") != "authorized"
+                       or not consent.get("question") or not consent.get("response")):
         return _wait(action["phase"], "one-time authorization for phase/replacement-session creation and "
                      "coordination is missing; record the user's combined reply with "
                      "`artifex_state.py consent --session-creation authorized`")
     route = (session.state["umbrella_sessions"] or [consent.get("umbrella_route")])[-1]
-    if not route:
+    if not manual and not route:
         return _wait(action["phase"], "umbrella route missing; record `event umbrella --session <id>`")
-    action["action"] = "create_session"
-    action["tool"] = "mcp__codex_app__create_thread"
+    action["action"] = "manual_session" if manual else "create_session"
+    action["tool"] = None if manual else "mcp__codex_app__create_thread"
     action["role_config"] = (str(Path(__file__).resolve().parent.parent / "agents" /
                                  (action["agent"].replace("_", "-") + ".toml")) if action["agent"] else None)
-    action["report_to"] = {"tool": "mcp__codex_app__send_message_to_thread", "threadId": route}
+    if not manual:
+        action["report_to"] = {"tool": "mcp__codex_app__send_message_to_thread", "threadId": route}
     for key in ("result_path", "evidence_dir"):
         if key in action:
             action[key] = str((session.mdir / action[key]).resolve())
@@ -1141,13 +1144,27 @@ def codex_session_action(session, action, initiative):
     def quote(text):
         return "\n".join("> " + line for line in str(text).splitlines())
     skill = Path(__file__).resolve().parent.parent
+    if manual:
+        reporting = (
+            "Automatic phase creation and coordination are not authorized for this run. Use manual relay: "
+            "give the user the finalized result path to submit to the umbrella. Do not send coordination "
+            "messages or create phase sessions. End with the result path.\n")
+    else:
+        reporting = (
+            f'Read the latest umbrella session from `python "{skill / "scripts" / "artifex_flow.py"}" '
+            f'runs --dir "{session.mdir.resolve()}"` before reporting; use {route} if unchanged. '
+            "Send one completion/checkpoint through mcp__codex_app__send_message_to_thread to the umbrella, "
+            "including run_id, phase and the finalized result path. The umbrella submits it to the router. "
+            "Use the recorded initiative authorization; do not request permission again for covered messages. "
+            "If the send fails, retain the result and report the exact blocker in this session; do not use a "
+            "native ancestor message or a polling loop as an alternate route. End with the result path.\n")
     action["prompt"] = (
         f"You are the independent Artifex {action['phase']} session for run {action['run_id']}, "
         f"named {action['session_name']}. You are not a native subagent or the umbrella.\n"
         f"Read {skill / 'SKILL.md'} and {skill / action['workflow']}. "
         f"Initiative state: {session.mdir.resolve().parent.parent / 'state.json'}. "
         f"Milestone folder: {session.mdir.resolve()}.\n"
-        "The umbrella recorded this human authorization (verify the original record before messaging):\n"
+        "Recorded human creation/coordination decision (verify the original record before any authorized message):\n"
         f"Question, verbatim:\n{quote(envelope['question'])}\n"
         f"Reply, verbatim:\n{quote(envelope['response'])}\n"
         f"Authorization metadata: {json.dumps(envelope, ensure_ascii=False)}\n"
@@ -1160,13 +1177,7 @@ def codex_session_action(session, action, initiative):
         "Finish all code and artifact writes, then write the complete result JSON to the assigned path. "
         "Publish that path only when it is ready for consumption, with no further writes to code or phase "
         "artifacts after publication. A blocked or needs_decision result must be reported too.\n"
-        f'Read the latest umbrella session from `python "{skill / "scripts" / "artifex_flow.py"}" '
-        f'runs --dir "{session.mdir.resolve()}"` before reporting; use {route} if unchanged. '
-        "Send one completion/checkpoint through mcp__codex_app__send_message_to_thread to the umbrella, "
-        "including run_id, phase and the finalized result path. The umbrella submits it to the router. "
-        "Use the recorded initiative authorization; do not request permission again for covered messages. "
-        "If the send fails, retain the result and report the exact blocker in this session; do not use a "
-        "native ancestor message or a polling loop as an alternate route. End with the result path.\n")
+        + reporting)
     return action
 
 
@@ -1216,8 +1227,8 @@ class Session:
                 action["inputs"]["delivery_authorization"] = {
                     k: delivery.get(k) for k in ("question", "response", "date", "source", "scope")}
             if action["action"] == "spawn" and host == "codex":
-                action = actions[index] = codex_session_action(self, action, initiative or {})
-            if action["action"] in ("spawn", "create_session") and dispatch \
+                action = actions[index] = codex_session_action(self, action, initiative)
+            if action["action"] in ("spawn", "create_session", "manual_session") and dispatch \
                     and action["run_id"] not in self.state["active"]:
                 self.record({"type": "dispatched", "run_id": action["run_id"], "phase": action["phase"],
                              "round": action.get("round"), "head": action["inputs"].get("head"),
