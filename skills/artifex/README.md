@@ -18,15 +18,17 @@ One umbrella session coordinates six phases, plus a bug track. The invocation pi
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | P1 research            | Frame the problem with you. Review and approve a kickoff, then either an analysis and milestone or the scoped small task |
 | P2 analysis            | Review and approve specs, record the tradeoffs and limitations you accept in a living register, write the implementation handoff for P3, then continue with the verification contract and handoff |
-| P3 implementation      | An isolated sub agent, started by the umbrella from each handoff, opens the PR; the umbrella follows CI and review feedback |
-| P4 review              | An independent sub agent reviews the PR, up to 3 rounds, then escalates                                          |
+| P3 implementation      | An isolated phase worker, started by the umbrella from each handoff, opens the PR; the umbrella follows CI and review feedback |
+| P4 review              | An independent phase worker reviews the PR, up to 3 rounds, then escalates                                          |
 | P5 auto verification   | Runs the contract's auto scenarios right after review passes, when there are any                                 |
 | P6 manual verification | Runs the contract's manual scenarios on your trigger, when there are any                                         |
 | D1 bug investigation | For a bug ticket (`defect` mode) or a major P5 finding, in place of P1 and P2: reproduce, find the root cause, then fix directly or after you approve the cause and the fix. P3 to P6 follow; a fix that needs design can go to P2 |
 
 `milestone` mode starts at P2 from a scope you give as a file, a link or a description. `implementation` mode starts at the router when you supply the specs, the verification contract and both handoffs, and at a short P2 when you supply some of them or only context.
 
-Several P2 sessions can be active at once, one per milestone or ad hoc analysis. Each hands its work to the umbrella, which runs the implementation and verification sub agents.
+On Codex, every phase and replacement is a separate top-level chat; one initiative-start authorization covers creation and scoped coordination. Authorized result messages resume the umbrella; declined consent uses registered manual handoffs and human relay. Native subagent waiting is not the phase-completion mechanism.
+
+Several P2 sessions can be active at once, one per milestone or ad hoc analysis. Each hands its work to the umbrella, which runs the implementation and verification phase workers.
 
 Approvals are tied to a specific revision of a specific artifact. Closing a milestone always needs your explicit sign-off.
 

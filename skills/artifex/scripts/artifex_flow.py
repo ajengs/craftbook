@@ -2,6 +2,7 @@
 """Deterministic router for the Artifex P3-P6 loop.
 
 The umbrella calls this script instead of deciding routine transitions itself.
+Codex dispatches create_session actions; other hosts retain native spawn actions.
 Every input is an event appended to <milestone folder>/run.jsonl, and the
 router state is a fold over that log: no hidden memory, replayable, testable.
 
@@ -15,7 +16,7 @@ Commands (each takes --dir <milestone folder>):
     runs      list runs and umbrella sessions with ids and time windows
     status    print the router's status block
 
-Every command except status prints JSON: {"checkpoints": [...], "actions": [...]}.
+Every command except status/runs prints JSON: {"checkpoints": [...], "actions": [...]}.
 The umbrella posts checkpoints whose "post" is true, carries out each action
 literally and handles "halted" itself. A spawn action is recorded as
 dispatched when printed (unless --dry-run) and stays unconfirmed until the
@@ -38,6 +39,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from artifex_host import detect_host
 
 REVIEW_CAP = 3
 CYCLE_CAPS = {"initial": REVIEW_CAP, "p5_rework": 1, "incremental": 1}
@@ -719,7 +722,7 @@ def _changed(state, kinds, hash_of):
 
 def _p3_blocker(state, siblings, active_phases):
     if "P3" in active_phases:
-        return "an implementation sub agent is already active"
+        return "an implementation worker is already active"
     if "P5" in active_phases:
         return "P5 may be committing tests on the branch"
     if "P6" in active_phases:
@@ -738,7 +741,7 @@ WRITERS = {"P3": "an implementation", "P5": "a P5 verification", "P6": "a P6 ver
 
 
 def _sibling_writer(state, siblings):
-    """A sibling milestone with a sub agent that commits on the same branch or in the same checkout."""
+    """A sibling milestone with a worker that commits on the same branch or in the same checkout."""
     fields = impl_fields(state)
     for name, other in siblings:
         other_fields = impl_fields(other)
@@ -746,7 +749,7 @@ def _sibling_writer(state, siblings):
                   if not is_placeholder(fields.get(k)) and other_fields.get(k) == fields.get(k)]
         writing = sorted({r["phase"] for r in other["active"].values()} & set(WRITERS))
         if shared and writing:
-            return (f"milestone {name} has {WRITERS[writing[0]]} sub agent on the same branch or "
+            return (f"milestone {name} has {WRITERS[writing[0]]} worker on the same branch or "
                     "working directory")
     return None
 
@@ -754,7 +757,7 @@ def _sibling_writer(state, siblings):
 def _verification_blocker(state, active_phases, siblings=(), phase="P5"):
     queued = set(state["requests"])
     if "P3" in active_phases or "P3" in queued:
-        return "waits for the implementation sub agent"
+        return "waits for the implementation worker"
     if "P4" in active_phases or "P4" in queued:
         return "waits for the review round"
     other = "P6" if phase == "P5" else "P5"
@@ -768,9 +771,9 @@ def _delivery_blocker(delivery) -> str | None:
     if delivery is None or delivery.get("status") == "authorized":
         return None
     if not delivery.get("status"):
-        return ("no delivery authorization recorded; ask the user once whether sub agents may branch, commit, "
+        return ("no delivery authorization recorded; ask the user once whether phase workers may branch, commit, "
                 "push and open the PR, and record the reply with `artifex_state.py delivery`")
-    return (f"delivery is {delivery['status']}: no sub agent pushes or opens the PR. The user does the work, "
+    return (f"delivery is {delivery['status']}: no phase worker pushes or opens the PR. The user does the work, "
             "then record it with `event complete --head <sha> --pr-url <url> --note <n>` (no --run-id)")
 
 
@@ -1112,6 +1115,72 @@ def load_siblings(mdir: Path) -> list:
     return out
 
 
+def codex_session_action(session, action, initiative):
+    """Adapt a router dispatch to the independent-chat transport; launch nothing here."""
+    if initiative is None:
+        return _wait(action["phase"], f"initiative state.json is required for Codex phase sessions at "
+                     f"{session.mdir.resolve().parent.parent}; initialize it with artifex_state.py init first")
+    consent = initiative.get("consent") or {}
+    manual = consent.get("session_creation") == "declined" or consent.get("status") in ("declined", "manual relay")
+    if not manual and (consent.get("session_creation") != "authorized" or consent.get("status") != "authorized"
+                       or not consent.get("question") or not consent.get("response")):
+        return _wait(action["phase"], "one-time authorization for phase/replacement-session creation and "
+                     "coordination is missing; record the user's combined reply with "
+                     "`artifex_state.py consent --session-creation authorized`")
+    route = (session.state["umbrella_sessions"] or [consent.get("umbrella_route")])[-1]
+    if not manual and not route:
+        return _wait(action["phase"], "umbrella route missing; record `event umbrella --session <id>`")
+    action["action"] = "manual_session" if manual else "create_session"
+    action["tool"] = None if manual else "mcp__codex_app__create_thread"
+    action["role_config"] = (str(Path(__file__).resolve().parent.parent / "agents" /
+                                 (action["agent"].replace("_", "-") + ".toml")) if action["agent"] else None)
+    if not manual:
+        action["report_to"] = {"tool": "mcp__codex_app__send_message_to_thread", "threadId": route}
+    for key in ("result_path", "evidence_dir"):
+        if key in action:
+            action[key] = str((session.mdir / action[key]).resolve())
+    envelope = {key: consent.get(key) for key in
+                ("status", "session_creation", "question", "response", "date", "source", "scope")}
+    def quote(text):
+        return "\n".join("> " + line for line in str(text).splitlines())
+    skill = Path(__file__).resolve().parent.parent
+    if manual:
+        reporting = (
+            "Automatic phase creation and coordination are not authorized for this run. Use manual relay: "
+            "give the user the finalized result path to submit to the umbrella. Do not send coordination "
+            "messages or create phase sessions. End with the result path.\n")
+    else:
+        reporting = (
+            f'Read the latest umbrella session from `python "{skill / "scripts" / "artifex_flow.py"}" '
+            f'runs --dir "{session.mdir.resolve()}"` before reporting; use {route} if unchanged. '
+            "Send one completion/checkpoint through mcp__codex_app__send_message_to_thread to the umbrella, "
+            "including run_id, phase and the finalized result path. The umbrella submits it to the router. "
+            "Use the recorded initiative authorization; do not request permission again for covered messages. "
+            "If the send fails, retain the result and report the exact blocker in this session; do not use a "
+            "native ancestor message or a polling loop as an alternate route. End with the result path.\n")
+    action["prompt"] = (
+        f"You are the independent Artifex {action['phase']} session for run {action['run_id']}, "
+        f"named {action['session_name']}. You are not a native subagent or the umbrella.\n"
+        f"Read {skill / 'SKILL.md'} and {skill / action['workflow']}. "
+        f"Initiative state: {session.mdir.resolve().parent.parent / 'state.json'}. "
+        f"Milestone folder: {session.mdir.resolve()}.\n"
+        "Recorded human creation/coordination decision (verify the original record before any authorized message):\n"
+        f"Question, verbatim:\n{quote(envelope['question'])}\n"
+        f"Reply, verbatim:\n{quote(envelope['response'])}\n"
+        f"Authorization metadata: {json.dumps(envelope, ensure_ascii=False)}\n"
+        f"Assigned inputs: {json.dumps(action['inputs'], ensure_ascii=False)}\n"
+        f"Result path: {action['result_path']}\n"
+        + (f"Evidence directory: {action['evidence_dir']}\n" if action.get("evidence_dir") else "")
+        + "Work only from the assigned inputs. Do not write shared state.json or run.jsonl. "
+        "The umbrella records the returned thread id with event started --agent. "
+        "Do not spawn a replacement for this phase yourself.\n"
+        "Finish all code and artifact writes, then write the complete result JSON to the assigned path. "
+        "Publish that path only when it is ready for consumption, with no further writes to code or phase "
+        "artifacts after publication. A blocked or needs_decision result must be reported too.\n"
+        + reporting)
+    return action
+
+
 class Session:
     def __init__(self, mdir: Path, must_exist: bool = True):
         self.mdir = mdir
@@ -1133,27 +1202,34 @@ class Session:
         self.checkpoints.extend(cps)
         return cps
 
-    def delivery(self):
-        """The initiative's delivery authorization from state.json, or None where there is no state.json."""
+    def initiative(self):
         path = self.mdir.resolve().parent.parent / "state.json"
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8")).get("delivery") or {}
+            return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
 
-    def respond(self, dispatch: bool = True) -> dict:
-        delivery = self.delivery()
+    def delivery(self):
+        initiative = self.initiative()
+        return None if initiative is None else initiative.get("delivery") or {}
+
+    def respond(self, dispatch: bool = True, host: str | None = None) -> dict:
+        initiative = self.initiative()
+        delivery = None if initiative is None else initiative.get("delivery") or {}
         actions = next_actions(self.state, load_siblings(self.mdir),
                                hash_of=lambda p: file_sha(resolve(self.mdir, p)), delivery=delivery)
-        for action in actions:
+        host = host or detect_host()["host"]
+        for index, action in enumerate(actions):
             if action["action"] == "spawn" and action["phase"] != "P4" and delivery \
                     and delivery.get("status") == "authorized":
-                # The user's own words, so neither the umbrella nor the agent asks again.
                 action["inputs"]["delivery_authorization"] = {
                     k: delivery.get(k) for k in ("question", "response", "date", "source", "scope")}
-            if action["action"] == "spawn" and dispatch and action["run_id"] not in self.state["active"]:
+            if action["action"] == "spawn" and host == "codex":
+                action = actions[index] = codex_session_action(self, action, initiative)
+            if action["action"] in ("spawn", "create_session", "manual_session") and dispatch \
+                    and action["run_id"] not in self.state["active"]:
                 self.record({"type": "dispatched", "run_id": action["run_id"], "phase": action["phase"],
                              "round": action.get("round"), "head": action["inputs"].get("head"),
                              "session_name": action["session_name"]})
@@ -1183,7 +1259,7 @@ def cmd_init(args):
     session.record({"type": "init", "milestone": args.milestone, "ticket": args.ticket,
                     "code_patterns": args.code_pattern, "doc_patterns": args.doc_pattern,
                     "umbrella_session": args.umbrella_session})
-    return session.respond(dispatch=not args.dry_run)
+    return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
 def cmd_handoff(args):
@@ -1204,7 +1280,7 @@ def cmd_handoff(args):
     if first:
         ev["target_ahead"] = target_ahead(fields)
     session.record(ev)
-    return session.respond(dispatch=not args.dry_run)
+    return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
 def cmd_result(args):
@@ -1212,6 +1288,13 @@ def cmd_result(args):
     env = load_result_file(Path(args.path))
     run = session.state["active"].get(env["run_id"])
     if run is None:
+        # A delayed completion can arrive again after resume. Only an identical,
+        # accepted envelope is safe to replay; rejected or changed results are not.
+        accepted = next((ev for ev in reversed(session.events)
+                         if ev["type"] == "result" and ev["result"].get("run_id") == env["run_id"]
+                         and (not ev.get("problems") or ev.get("override"))), None)
+        if accepted and accepted["result"] == env:
+            return session.respond(dispatch=not args.dry_run, host=args.host)
         raise FlowError(f"{env['run_id']} is not an active run")
     problems = check_shape(session.state, run, env, args.dir)
     push = None
@@ -1220,7 +1303,7 @@ def cmd_result(args):
         problems += git_problems
     session.record({"type": "result", "result": env, "problems": problems, "override": args.override,
                     "push": push})
-    return session.respond(dispatch=not args.dry_run)
+    return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
 def cmd_event(args):
@@ -1257,7 +1340,7 @@ def cmd_event(args):
     else:
         ev = {"type": "close", "note": args.note}
     session.record(ev)
-    return session.respond(dispatch=not args.dry_run)
+    return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
 def complete_event(session, args) -> dict:
@@ -1289,7 +1372,7 @@ def complete_event(session, args) -> dict:
 
 
 def cmd_next(args):
-    return Session(args.dir).respond(dispatch=not args.dry_run)
+    return Session(args.dir).respond(dispatch=not args.dry_run, host=args.host)
 
 
 def run_report(events) -> dict:
@@ -1359,6 +1442,8 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, **kw)
         # `event` also takes --dir after its subcommand, so it can't be required here.
         p.add_argument("--dir", type=Path, required=name != "event", help="milestone folder")
+        p.add_argument("--host", choices=["codex", "claude-code", "other"],
+                       help="launch transport; defaults to the detected host")
         if name not in ("status", "runs"):
             p.add_argument("--dry-run", action="store_true", help="print actions without recording dispatch")
         return p
@@ -1421,6 +1506,7 @@ def build_parser() -> argparse.ArgumentParser:
     close.add_argument("--note", required=True)
     for event_parser in events.choices.values():
         event_parser.add_argument("--dir", type=Path, default=argparse.SUPPRESS, help="milestone folder")
+        event_parser.add_argument("--host", choices=["codex", "claude-code", "other"], default=argparse.SUPPRESS)
         event_parser.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS)
     p.set_defaults(func=cmd_event)
 
