@@ -273,7 +273,7 @@ def notify_committed(session, event: dict, checkpoints: list, suppress: bool = F
     if any(cp.get("halted") for cp in checkpoints):
         cp = next(cp for cp in checkpoints if cp.get("halted"))
         result = event.get("result", {})
-        episode = cp.get("run_id") or result.get("run_id") or event.get("seq") or "episode"
+        episode = cp.get("run_id") or result.get("run_id") or _halt_episode(session, cp["kind"])
         try:
             _warn_status(send_event(session.mdir.resolve().parent.parent, ticket, milestone,
                                     {"key": f"halt/{cp['kind']}/{episode}",
@@ -281,6 +281,21 @@ def notify_committed(session, event: dict, checkpoints: list, suppress: bool = F
                                      "summary": cp.get("message", "Workflow halted")}))
         except Exception:
             print("artifex notification skipped: sender unavailable", file=sys.stderr)
+
+
+def _halt_episode(session, kind: str) -> str:
+    """Return the first committed event that raised this still-open halt."""
+    from artifex_flow import apply, new_state
+
+    state = new_state()
+    episode = None
+    for committed in session.events:
+        if committed.get("type") == "resume":
+            episode = None
+        checkpoints = apply(state, committed)
+        if episode is None and any(cp.get("halted") and cp.get("kind") == kind for cp in checkpoints):
+            episode = committed.get("seq")
+    return str(episode or "episode")
 
 
 def _warn_status(status: str) -> None:
