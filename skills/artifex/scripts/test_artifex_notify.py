@@ -260,7 +260,7 @@ class NotifierTests(unittest.TestCase):
             session.record(event)
         self.assertEqual(keys, ["halt/result_rejected/run-1", "halt/result_rejected/run-1"])
 
-    def test_non_run_halt_reentry_gets_a_new_episode_key(self):
+    def test_non_run_halt_reuses_identity_until_resolution_then_renews_it(self):
         mdir = self.root / "milestones" / "alpha"
         session = flow.Session(mdir, must_exist=False)
         session.record({"type": "init", "milestone": "alpha", "ticket": "TASK-1"})
@@ -271,14 +271,18 @@ class NotifierTests(unittest.TestCase):
                             "sha256": "h1", "fields": {"branch": "work", "workdir": "D:/work",
                             "target": "main", "depends_on": []}, "target_ahead": {"commits": 1}})
             self.assertTrue(session.state["halt"])
+            session.record({"type": "context", "fields": {"target": "main"},
+                            "target_ahead": {"commits": 2}})
             session.record({"type": "resume", "note": "Resolved first target episode"})
             self.assertFalse(session.state["halt"])
             session.record({"type": "context", "fields": {"target": "main"},
                             "target_ahead": {"commits": 2}})
-        self.assertEqual(len(keys), 2)
+        self.assertEqual(len(keys), 3)
         self.assertTrue(keys[0].startswith("halt/target_unpushed/"))
         self.assertTrue(keys[1].startswith("halt/target_unpushed/"))
-        self.assertNotEqual(keys[0], keys[1])
+        self.assertTrue(keys[2].startswith("halt/target_unpushed/"))
+        self.assertEqual(keys[0], keys[1])
+        self.assertNotEqual(keys[1], keys[2])
 
 
 if __name__ == "__main__":
