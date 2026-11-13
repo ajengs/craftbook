@@ -89,10 +89,17 @@ depends_on: none                     # or a list; each item is released by depen
 
 ```yaml
 ---
-auto: [V1, V2]                       # verification handoff or diagnosis: scenario ids P5 runs
-manual: [V3]                         # scenario ids P6 runs; [] when none
+auto_agent: [V1, V2]                 # P5: automatic agent execution after P4 passes
+manual_agent: [V3]                   # P6: explicit user trigger, fully agent-executed
+manual_user: [V4]                    # P6: explicit trigger and specified user interactions
 ---
 ```
+
+Every scenario belongs to exactly one category; duplicate IDs are rejected. P6 covers both manual categories on the user's explicit trigger. Spawn inputs include the assigned `scenarios` and `scenario_groups`; dispatch snapshots both so a resumed run preserves its original assignment. Tools, readiness, evidence purposes and user interaction steps remain in the handoff; the router does not probe tool availability or claim the user acted.
+
+Legacy `auto` maps to `auto_agent`; legacy `manual` is conservatively treated as `manual_user` until the controlling artifact is explicitly reclassified. Do not combine a nonempty legacy field with its replacement. New or revised handoffs use all three fields above, with explicit empty lists for unused categories. New CLI input rejects missing fields and placeholder IDs; replay retains support for historical sparse legacy events. Inline comments outside quoted values are supported.
+
+Changing the verification handoff revokes pending P6 triggers and retries. An unconfirmed dispatch against its old hash is held rather than reprinted with new instructions: check whether the agent already runs, then record `event started`, or confirm it never started/has ended and record `event run-failed`. An obsolete P5 run then routes automatically to the current handoff; obsolete P6 waits for a new explicit trigger. Running obsolete results retain their original assignments and cannot pass the revised contract.
 
 When a recorded handoff file changes, the router stops dispatching anything that reads it until `handoff` records it again. That way a stale handoff can't reach an agent unnoticed.
 
