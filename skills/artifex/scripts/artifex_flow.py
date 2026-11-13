@@ -178,19 +178,12 @@ def review_settled(state: dict) -> bool:
 
 
 def scenario_groups(fields: dict) -> dict:
-    """Legacy manual scenarios retain a user-interaction requirement until reclassified."""
-    for old, new in (("auto", "auto_agent"), ("manual", "manual_user")):
-        if fields.get(old) and fields.get(new):
-            raise FlowError(f"use {new} instead of mixing it with legacy {old}")
-    groups = {
+    """Adapt replayed fields without dropping historical phase assignments or validating old logs."""
+    return {
         "auto_agent": list(fields.get("auto_agent") or fields.get("auto", [])),
         "manual_agent": list(fields.get("manual_agent", [])),
         "manual_user": list(fields.get("manual_user") or fields.get("manual", [])),
     }
-    ids = [sid for group in groups.values() for sid in group]
-    if len(ids) != len(set(ids)):
-        raise FlowError("each verification scenario must belong to exactly one run category")
-    return groups
 
 
 def validate_verification_fields(fields: dict) -> None:
@@ -199,7 +192,10 @@ def validate_verification_fields(fields: dict) -> None:
     if unknown:
         raise FlowError("unknown verification handoff field(s): " + ", ".join(unknown))
     categories = ("auto_agent", "manual_agent", "manual_user")
-    required = categories if any(k in fields for k in categories) else ("auto", "manual")
+    new_format = any(k in fields for k in categories)
+    if new_format and ({"auto", "manual"} & set(fields)):
+        raise FlowError("use either legacy auto/manual fields or all three new category fields; do not mix formats")
+    required = categories if new_format else ("auto", "manual")
     missing = [k for k in required if k not in fields]
     if missing:
         raise FlowError("verification handoff frontmatter lacks " + ", ".join(missing))
@@ -209,7 +205,9 @@ def validate_verification_fields(fields: dict) -> None:
         values = fields[key]
         if not isinstance(values, list) or any(not isinstance(v, str) or is_placeholder(v) for v in values):
             raise FlowError(f"{key} must be a list of concrete scenario IDs, or []")
-    scenario_groups(fields)
+    ids = [sid for group in scenario_groups(fields).values() for sid in group]
+    if len(ids) != len(set(ids)):
+        raise FlowError("each verification scenario must belong to exactly one run category")
 
 
 def phase_scenarios(fields: dict, phase: str) -> list:
@@ -743,7 +741,8 @@ def spawn_action(state: dict, phase: str, run_id: str | None = None, run: dict |
                                else phase_scenarios(ver["fields"], phase))
         groups = (run.get("scenario_groups") if run is not None else None)
         groups = groups or scenario_groups(ver["fields"])
-        inputs["scenario_groups"] = {k: [sid for sid in ids if sid in inputs["scenarios"]]
+        categories = ("auto_agent",) if phase == "P5" else ("manual_agent", "manual_user")
+        inputs["scenario_groups"] = {k: [sid for sid in ids if sid in inputs["scenarios"]] if k in categories else []
                                      for k, ids in groups.items()}
         action["evidence_dir"] = f"evidence/{run_id}"
     if run is not None:

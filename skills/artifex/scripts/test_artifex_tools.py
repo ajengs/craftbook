@@ -94,6 +94,22 @@ class CatalogTests(unittest.TestCase):
             with self.assertRaises(at.CatalogError):
                 self.resolve()
 
+    def test_localized_git_environment_does_not_break_outside_repo_fallback(self):
+        def git_probe(*args, **kwargs):
+            env = kwargs.get("env", {})
+            stderr = ("fatal: not a git repository" if env.get("LC_ALL") == "C" and env.get("LANGUAGE") == "C"
+                      else "fatal: Kein Git-Repository")
+            return subprocess.CompletedProcess(args, 128, "", stderr)
+        with mock.patch.dict("os.environ", {"LC_ALL": "de_DE.UTF-8", "LANGUAGE": "de"}), \
+                mock.patch.object(at.subprocess, "run", side_effect=git_probe):
+            self.assertEqual(at.implementation_root(self.project), self.project.resolve())
+
+    def test_uppercase_hash_with_surrounding_whitespace_matches_pinned_catalog(self):
+        path = self.write(self.project / "artifex-tools.local.md")
+        identity = self.resolve()
+        checked = at.check_catalog(path, " " + identity["sha256"].upper() + "\n")
+        self.assertEqual(checked["sha256"], identity["sha256"])
+
     def test_relative_pinned_path_is_refused(self):
         with self.assertRaises(at.CatalogError):
             at.check_catalog(Path("catalog.md"), "x" * 64)

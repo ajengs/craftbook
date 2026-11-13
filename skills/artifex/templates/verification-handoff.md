@@ -5,7 +5,7 @@ manual_user: <[manual user run scenario ids], or []>
 ---
 # Verification handoff — <milestone>
 
-The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter) and must match the scenario sections below.
+The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter) and must match the scenario sections below. Quote frontmatter values containing ` #` so the hash is not treated as an inline comment.
 
 Approved specs: <path@revision>
 Approved verification contract: <path@revision>

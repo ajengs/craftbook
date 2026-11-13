@@ -12,12 +12,12 @@ python <skill>/scripts/artifex_tools.py resolve --workdir <implementation direct
 
 The resolver uses the implementation Git repository/worktree root (`git rev-parse --show-toplevel`), not the phase chat's current directory. Outside Git, or when Git is unavailable, `--workdir` itself is the root. The directory must exist. Selection order is:
 
-1. An explicitly supplied catalog file. Expand `~`; resolve relative paths against the implementation root. A missing, unreadable or invalid explicit file is a blocker, never a reason to fall back.
+1. An explicitly supplied catalog file. Expand `~`; resolve relative paths against the implementation root. A missing, unreadable or non-file explicit selection is a blocker, never a reason to fall back.
 2. `artifex-tools.local.md` at that implementation root.
 3. `~/.agents/artifex-tools.local.md` for the executing user.
 4. The bundled [tools-catalog.example.md](tools-catalog.example.md), as an unchecked starter only.
 
-Only an absent default file permits fallback. An existing but unreadable/invalid default selection is also a blocker. Resolve one catalog; never merge catalogs silently. Record the returned absolute `path`, `source` and full `sha256` in the contract and handoff. Relative file references *inside* a catalog use the selected catalog's parent directory; resolve selected tool/runbook/skill file references to absolute paths in the handoff. Skill/tool names are capability identifiers, not relative file paths: discover their exact executable references before use. No catalog is required for a self-contained scenario; explicitly record catalog use as not applicable rather than inventing a personal file.
+Only an absent default file permits fallback. An existing but unreadable or non-file default selection is also a blocker. Resolve one catalog; never merge catalogs silently. Record the returned absolute `path`, `source` and full `sha256` in the contract and handoff. Relative file references *inside* a catalog use the selected catalog's parent directory; resolve selected tool/runbook/skill file references to absolute paths in the handoff. Skill/tool names are capability identifiers, not relative file paths: discover their exact executable references before use. No catalog is required for a self-contained scenario; explicitly record catalog use as not applicable rather than inventing a personal file.
 
 During **execution**, consume the approved pinned identity, without rerunning discovery or selecting a different user's catalog:
 
@@ -25,7 +25,7 @@ During **execution**, consume the approved pinned identity, without rerunning di
 python <skill>/scripts/artifex_tools.py check --path <approved absolute path> --sha256 <approved hash>
 ```
 
-If the file changed, disappeared, or is unreadable, hold affected scenarios and reconcile the selected capabilities and evidence plan. Copying identical bytes to a reachable path is a recorded relocation; a material change in tools, evidence sufficiency or user responsibility needs renewed approval. A new higher-precedence local file does not override an existing approved selection. The helper validates file identity only; it does not prove tool readiness. The user may copy the bundled starter to either local location and add, remove or replace rows.
+If the file changed, disappeared, or is unreadable, hold affected scenarios and reconcile the selected capabilities and evidence plan. Copying identical bytes to a reachable path is a recorded relocation; a material change in tools, evidence sufficiency or user responsibility needs renewed approval. A new higher-precedence local file does not override an existing approved selection. The helper checks file identity and readability, not Markdown structure or catalog contents. The planning agent must read the selected file and confirm it supplies the capabilities the run needs; an empty or unusable catalog is a planning gap. No fixed Markdown schema is required, and a successful identity check does not prove tool readiness. The user may copy the bundled starter to either local location and add, remove or replace rows.
 
 Local catalogs belong to the user, outside the installed skill. Preserve user edits. Do not require catalog changes to install a skill, and do not overwrite a local file during updates. The craftbook repo ignores its root local catalog; other repositories can keep theirs outside version control or explicitly share one. Catalog references do not grant permission, install software, execute commands, or prove readiness. Read the actual selected skill before invoking it and preserve its prerequisites and scope.
 

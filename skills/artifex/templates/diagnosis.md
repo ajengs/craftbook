@@ -5,7 +5,7 @@ manual_user: <[reproduction id] requiring user interactions, or []>
 ---
 # Diagnosis — <bug>
 
-The frontmatter is read by the router, which records this diagnosis as the verification handoff (`references/orchestration.md`).
+The frontmatter is read by the router, which records this diagnosis as the verification handoff (`references/orchestration.md`). Quote frontmatter values containing ` #` so the hash is not treated as an inline comment.
 
 Source: <ticket link | P5 finding in milestone <id>>
 Seen on: <version, head or environment>

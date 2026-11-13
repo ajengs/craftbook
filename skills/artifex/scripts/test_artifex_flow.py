@@ -1283,5 +1283,76 @@ class VerificationRoutingRegressionTests(unittest.TestCase):
         self.assertEqual(sim.state["handoffs"]["verification"]["fields"], {"auto": []})
 
 
+class LegacyReplayTests(unittest.TestCase):
+    def events(self):
+        return [
+            {"type": "init", "milestone": "M2", "ticket": "T-1"},
+            {"type": "handoff", "kind": "implementation", "path": "implementation.md", "sha256": "i" * 64,
+             "fields": {"branch": "b", "workdir": "w", "target": "main", "depends_on": []}},
+            {"type": "handoff", "kind": "verification", "path": "verification.md", "sha256": "v" * 64,
+             "fields": {"auto": ["V"], "manual": ["V"]}},
+            {"type": "dispatched", "phase": "P3", "run_id": "M2-P3-1"},
+            {"type": "result", "result": {"run_id": "M2-P3-1", "phase": "P3", "status": "completed",
+                                          "head": sha(1), "pr_url": "https://example/pr/1"},
+             "push": {"class": "initial"}},
+            {"type": "dispatched", "phase": "P4", "run_id": "M2-P4-1", "head": sha(1), "round": 1},
+            {"type": "result", "result": {"run_id": "M2-P4-1", "phase": "P4", "status": "completed",
+                                          "head": sha(1), "artifacts": ["review.md"]}},
+            {"type": "dispatched", "phase": "P5", "run_id": "M2-P5-1", "head": sha(1)},
+            {"type": "result", "result": {"run_id": "M2-P5-1", "phase": "P5", "status": "completed",
+                                          "head": sha(1), "scenarios": {"V": "pass"}}},
+            {"type": "trigger_p6"},
+            {"type": "dispatched", "phase": "P6", "run_id": "M2-P6-1", "head": sha(1)},
+        ]
+
+    def test_legacy_duplicate_ids_replay_and_preserve_both_phase_assignments(self):
+        events = self.events()
+        p5 = af.fold(events[:8])["active"]["M2-P5-1"]
+        self.assertEqual(p5["scenarios"], ["V"])
+        p6 = af.fold(events)["active"]["M2-P6-1"]
+        self.assertEqual(p6["scenarios"], ["V"])
+        self.assertEqual(p6["scenario_groups"]["manual_user"], ["V"])
+
+    def test_legacy_duplicate_id_is_only_assigned_to_the_spawned_phase(self):
+        for phase, events in (("P5", self.events()[:8]), ("P6", self.events())):
+            with self.subTest(phase=phase):
+                state = af.fold(events)
+                run_id = f"M2-{phase}-1"
+                action = af.spawn_action(state, phase, run_id, state["active"][run_id])
+                self.assertEqual(action["inputs"]["scenario_groups"],
+                                 {"auto_agent": ["V"] if phase == "P5" else [], "manual_agent": [],
+                                  "manual_user": ["V"] if phase == "P6" else []})
+
+    def test_legacy_duplicates_do_not_break_sibling_loading_or_cli_repair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current, sibling = root / "M1", root / "M2"
+            current.mkdir()
+            sibling.mkdir()
+            (sibling / "run.jsonl").write_text(
+                "".join(json.dumps(ev) + "\n" for ev in self.events()), encoding="utf-8")
+            self.assertEqual(af.load_siblings(current)[0][0], "M2")
+            handoff = sibling / "verification.md"
+            handoff.write_text("---\nauto_agent: [A]\nmanual_agent: []\nmanual_user: [U]\n---\n",
+                               encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = af.main(["handoff", "--dir", str(sibling), "--kind", "verification", str(handoff),
+                                "--dry-run"])
+            self.assertEqual(code, 0)
+            self.assertEqual(af.Session(sibling).state["handoffs"]["verification"]["sha256"], af.file_sha(handoff))
+
+    def test_new_ingress_still_rejects_legacy_duplicates_and_mixed_field_shapes(self):
+        for fields in ({"auto": ["V"], "manual": ["V"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": [], "auto": ["V"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": [], "manual": []}):
+            with self.subTest(fields=fields), self.assertRaises(af.FlowError):
+                af.validate_verification_fields(fields)
+
+    def test_quoted_frontmatter_preserves_space_hash_in_paths(self):
+        fields = af.parse_frontmatter('---\nworkdir: "D:\\Work #2\\repo" # checkout\nbranch: "feature #2"\ntarget: main\n---\n')
+        self.assertEqual(fields["workdir"], r"D:\Work #2\repo")
+        self.assertEqual(fields["branch"], "feature #2")
+
+
 if __name__ == "__main__":
     unittest.main()

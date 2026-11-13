@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -19,7 +20,8 @@ def implementation_root(workdir: Path) -> Path:
         raise CatalogError(f"implementation directory not found: {workdir}")
     try:
         proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=workdir,
-                              capture_output=True, text=True, check=False)
+                              capture_output=True, text=True, check=False,
+                              env={**os.environ, "LC_ALL": "C", "LANGUAGE": "C"})
     except FileNotFoundError:
         return workdir
     except OSError as exc:
@@ -42,6 +44,8 @@ def implementation_root(workdir: Path) -> Path:
 def catalog_identity(path: Path, source: str) -> dict:
     try:
         path = path.resolve(strict=True)
+        if not path.is_file():
+            raise CatalogError(f"{source} catalog must be a regular file: {path}")
         content = path.read_bytes()
     except OSError as exc:
         raise CatalogError(f"{source} catalog is unavailable: {path} ({exc})") from exc
@@ -55,7 +59,7 @@ def resolve_catalog(workdir: Path, catalog: str | None = None, *, home: Path | N
         return catalog_identity(path if path.is_absolute() else root / path, "explicit")
     for source, path in (("project", root / "artifex-tools.local.md"),
                          ("user", (home or Path.home()) / ".agents" / "artifex-tools.local.md")):
-        # Only absence permits fallback; an unreadable or invalid selection is an error.
+        # Only absence permits fallback; an unreadable or non-file selection is an error.
         try:
             path.lstat()
         except FileNotFoundError:
@@ -72,7 +76,7 @@ def check_catalog(path: Path, expected_sha256: str) -> dict:
     if not path.is_absolute():
         raise CatalogError("the pinned catalog path must be absolute")
     identity = catalog_identity(path, "pinned")
-    if identity["sha256"] != expected_sha256:
+    if identity["sha256"] != expected_sha256.strip().lower():
         raise CatalogError(f"catalog changed since planning: {identity['path']}; reconcile the affected plan")
     return identity
 
