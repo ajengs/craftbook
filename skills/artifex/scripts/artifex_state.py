@@ -461,7 +461,12 @@ def recognise(path: str):
     if first == "---":
         fields = artifex_flow.parse_frontmatter(text)
         name = Path(path).name
-        if {"auto", "manual"} <= set(fields):
+        categories = {"auto_agent", "manual_agent", "manual_user"}
+        if {"auto", "manual"} & set(fields) or categories & set(fields):
+            try:
+                artifex_flow.validate_verification_fields(fields)
+            except artifex_flow.FlowError as exc:
+                return None, f"{name}: {exc}"
             return "verification_handoff", None
         if {"branch", "workdir", "target"} <= set(fields):
             return "handoff", None
@@ -495,6 +500,12 @@ def classify_files(files: list, named: dict):
                 missing = [k for k in ("branch", "workdir", "target") if k not in fields]
                 if missing:
                     problem = f"{Path(path).name}: the handoff frontmatter lacks " + ", ".join(missing)
+            elif kind == "verification_handoff":
+                fields = artifex_flow.parse_frontmatter(Path(path).read_text(encoding="utf-8", errors="replace"))
+                try:
+                    artifex_flow.validate_verification_fields(fields)
+                except artifex_flow.FlowError as exc:
+                    problem = f"{Path(path).name}: {exc}"
         else:
             kind, problem = recognise(path)
         if problem:

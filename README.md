@@ -30,6 +30,10 @@ See [`INSTALL.md`](INSTALL.md) for Linux, macOS and Windows, Claude Code, Claude
 | Document system for review drafts | A commentable document or artifact system | Markdown files |
 | Sub agents and session creation | Whatever your environment provides | The umbrella prepares a brief and asks you to start the session |
 
+## Local verification tools
+
+Artifex verification distinguishes automatic agent runs, user-triggered agent runs, and runs requiring user interactions. Copy [`tools-catalog.example.md`](skills/artifex/references/tools-catalog.example.md) to `artifex-tools.local.md` at your implementation repo/worktree root (ignored here), or to `~/.agents/artifex-tools.local.md`, and edit it with your own tools and skills. An explicit catalog path takes precedence. Each contract selects tools and evidence per run and records actual readiness; catalog entries are only candidates. See [verification tools planning](skills/artifex/references/verification-tools.md).
+
 ## Layout
 
 ```

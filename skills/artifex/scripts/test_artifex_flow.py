@@ -878,6 +878,37 @@ class CliTests(unittest.TestCase):
         head = self.repo.commit("feature.py", "x = 1\n", "feature")
         self.cli("event", "complete", "--head", head, "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
 
+    def test_invalid_verification_frontmatter_never_records_a_handoff(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        path = self.mdir / "verification-handoff.md"
+        before = (self.mdir / "run.jsonl").read_bytes()
+        for text in ("# Missing frontmatter", "---\nauto_agnet: [A]\n---\n",
+                     "---\nauto_agent: [A]\nmanual_agent: [A]\nmanual_user: []\n---\n"):
+            path.write_text(text, encoding="utf-8")
+            self.cli("handoff", "--kind", "verification", str(path), expect=2)
+            self.assertEqual((self.mdir / "run.jsonl").read_bytes(), before)
+
+    def test_new_categories_route_through_cli_with_explicit_manual_trigger(self):
+        old_id, head = self.to_p5()
+        path = self.mdir / "verification-handoff.md"
+        path.write_text("---\nauto_agent: [A] # automatic\nmanual_agent: [M]\nmanual_user: [U]\n---\n",
+                        encoding="utf-8")
+        held = self.cli("handoff", "--kind", "verification", str(path))
+        self.assertFalse(any(a["action"] == "spawn" for a in held["actions"]))
+        new = self.cli("event", "run-failed", "--run-id", old_id, "--reason", "confirmed not running")
+        p5, = [a for a in new["actions"] if a["action"] == "spawn"]
+        self.assertEqual(p5["inputs"]["scenarios"], ["A"])
+        self.assertEqual(p5["inputs"]["verification_handoff"],
+                         "verification-handoff.md@" + af.file_sha(path)[:12])
+        (self.mdir / "p5.md").write_text("pass\n", encoding="utf-8")
+        result = self.cli("result", self.result_file(p5["run_id"], phase="P5", status="completed", head=head,
+                                                   scenarios={"A": "pass"}, artifacts=["p5.md"]))
+        self.assertFalse(any(a["action"] == "spawn" for a in result["actions"]))
+        trigger = self.cli("event", "trigger-p6")
+        p6, = [a for a in trigger["actions"] if a["action"] == "spawn"]
+        self.assertEqual(p6["inputs"]["scenario_groups"],
+                         {"auto_agent": [], "manual_agent": ["M"], "manual_user": ["U"]})
+
     def to_p5(self):
         """Implementation, a passing review and a P5 spawn on the pushed feature head."""
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
@@ -1133,6 +1164,123 @@ class EvidenceDirTests(unittest.TestCase):
         sim.to_review_pass()
         p5, = sim.spawned()
         self.assertEqual(p5["evidence_dir"], f"evidence/{p5['run_id']}")
+
+
+class RunCategoryTests(unittest.TestCase):
+    def categorized(self, **groups):
+        sim = Sim(verification=False)
+        sim.apply({"type": "handoff", "kind": "verification", "path": "verification-handoff.md",
+                   "sha256": "v" * 64, "fields": groups})
+        return sim
+
+    def test_auto_starts_after_review_but_manual_categories_wait_for_trigger(self):
+        sim = self.categorized(auto_agent=["A"], manual_agent=["M"], manual_user=["U"])
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        self.assertEqual(p5["inputs"]["scenarios"], ["A"])
+        self.assertEqual(p5["inputs"]["scenario_groups"]["auto_agent"], ["A"])
+        sim.result(p5["run_id"], head=sha(1), scenarios={"A": "pass"})
+        self.assertEqual(sim.spawned(), [])
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        self.assertEqual(p6["inputs"]["scenarios"], ["M", "U"])
+        self.assertEqual(p6["inputs"]["scenario_groups"],
+                         {"auto_agent": [], "manual_agent": ["M"], "manual_user": ["U"]})
+        run = sim.state["active"][p6["run_id"]]
+        self.assertTrue(af._check_scenarios(sim.state, run, "completed", {"scenarios": {"M": "pass"}}))
+        self.assertEqual(af._check_scenarios(sim.state, run, "completed",
+                                           {"scenarios": {"M": "pass", "U": "pass"}}), [])
+
+    def test_each_manual_category_alone_waits_for_explicit_trigger(self):
+        for category in ("manual_agent", "manual_user"):
+            with self.subTest(category=category):
+                sim = self.categorized(**{category: ["V"]})
+                sim.to_review_pass()
+                self.assertEqual(sim.spawned(), [])
+                sim.apply({"type": "trigger_p6"})
+                p6, = sim.spawned()
+                self.assertEqual(p6["inputs"]["scenario_groups"][category], ["V"])
+
+    def test_dispatch_preserves_categories_while_old_run_finishes(self):
+        sim = self.categorized(manual_agent=["M"], manual_user=["U"])
+        sim.to_review_pass()
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        run = sim.state["active"][p6["run_id"]]
+        sim.apply({"type": "handoff", "kind": "verification", "path": "verification-handoff.md",
+                   "sha256": "w" * 64, "fields": {"manual_user": ["M", "U"]}})
+        self.assertEqual(run["scenario_groups"]["manual_agent"], ["M"])
+        sim.result(p6["run_id"], head=sha(1), scenarios={"M": "pass", "U": "pass"})
+        self.assertIn("p6_obsolete", sim.kinds())
+        self.assertIsNone(sim.state["p6"]["passed_head"])
+
+    def test_duplicate_or_ambiguous_assignments_are_rejected(self):
+        for groups in ({"auto_agent": ["V"], "manual_user": ["V"]},
+                       {"manual_agent": ["V", "V"]},
+                       {"manual": ["L"], "manual_user": ["V"]},
+                       {"auto": ["L"], "auto_agent": ["V"]}):
+            with self.subTest(groups=groups), self.assertRaises(af.FlowError):
+                af.validate_verification_fields({"auto_agent": [], "manual_agent": [], "manual_user": [], **groups})
+
+    def test_frontmatter_and_legacy_categories(self):
+        fields = af.parse_frontmatter("---\nauto_agent: [A]\nmanual_agent: M\nmanual_user: [U]\n---\n")
+        self.assertEqual(af.phase_scenarios(fields, "P5"), ["A"])
+        self.assertEqual(af.phase_scenarios(fields, "P6"), ["M", "U"])
+        self.assertEqual(af.scenario_groups({"auto": ["A"], "manual": ["U"]}),
+                         {"auto_agent": ["A"], "manual_agent": [], "manual_user": ["U"]})
+
+
+class VerificationRoutingRegressionTests(unittest.TestCase):
+    def test_replacing_contract_revokes_pending_manual_trigger(self):
+        sim = Sim(auto=(), manual=("M",))
+        sim.apply({"type": "trigger_p6"})
+        sim.verification(auto=(), manual=("U",), sha256="w" * 64)
+        sim.to_review_pass()
+        self.assertEqual(sim.spawned(), [])
+        sim.apply({"type": "trigger_p6"})
+        self.assertEqual(sim.spawned()[0]["inputs"]["scenarios"], ["U"])
+
+    def test_retry_of_obsolete_p6_does_not_start_revised_contract(self):
+        sim = Sim(auto=(), manual=("M",))
+        sim.to_review_pass()
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        sim.verification(auto=(), manual=("U",), sha256="w" * 64)
+        sim.apply({"type": "run_failed", "run_id": p6["run_id"], "reason": "agent stopped"})
+        self.assertEqual(sim.spawned(), [])
+        self.assertFalse(sim.state["p6"]["triggered"])
+
+    def test_unconfirmed_verification_is_not_reissued_with_a_new_handoff(self):
+        for phase in ("P5", "P6"):
+            with self.subTest(phase=phase):
+                sim = Sim(auto=("A",) if phase == "P5" else (), manual=("M",))
+                sim.to_review_pass()
+                if phase == "P6":
+                    sim.apply({"type": "trigger_p6"})
+                original, = [a for a in sim.step(start=False) if a["action"] == "spawn"]
+                sim.verification(auto=("B",) if phase == "P5" else (), manual=("U",), sha256="w" * 64)
+                self.assertFalse(any(a["action"] == "spawn" for a in af.next_actions(sim.state)))
+                sim.apply({"type": "run_failed", "run_id": original["run_id"], "reason": "confirmed never started"})
+                spawns = sim.spawned()
+                self.assertEqual([a["phase"] for a in spawns], ["P5"] if phase == "P5" else [])
+
+    def test_documented_frontmatter_comments_are_not_scenario_ids(self):
+        fields = af.parse_frontmatter('---\nauto_agent: [A] # automatic\nmanual_agent: [] # empty\nmanual_user: ["U#1"] # user\n---\n')
+        self.assertEqual(af.phase_scenarios(fields, "P5"), ["A"])
+        self.assertEqual(af.phase_scenarios(fields, "P6"), ["U#1"])
+
+    def test_incomplete_or_misspelled_verification_fields_are_refused(self):
+        for fields in ({}, {"auto_agnet": ["A"]}, {"auto_agent": ["A"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": ["<scenario ids>"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": [], "manual_agnet": ["M"]}):
+            with self.subTest(fields=fields), self.assertRaises(af.FlowError):
+                af.validate_verification_fields(fields)
+
+    def test_legacy_sparse_handoff_log_still_replays(self):
+        sim = Sim(verification=False)
+        sim.apply({"type": "handoff", "kind": "verification", "path": "old.md", "sha256": "v" * 64,
+                   "fields": {"auto": []}})
+        self.assertEqual(sim.state["handoffs"]["verification"]["fields"], {"auto": []})
 
 
 if __name__ == "__main__":

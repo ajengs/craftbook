@@ -17,14 +17,14 @@
 - State the milestone objective, agreed approach, relevant code/interfaces, constraints, exclusions, checks expected, and what counts as a completed changeset.
 - Make design authority and escalation route clear. Do not over-prescribe trivial coding steps.
 - It has no approval step of its own. Its completion, together with the approved specs and no blocker, is the checkpoint that starts the implementation sub agent automatically. The umbrella starts it; there is no P3 session.
-- A second isolated document, the verification handoff, is created immediately after verification-contract approval and serves the P5 auto and P6 manual verification runs. It names the approved revisions, the auto and manual contract scenarios, how to verify (prefer extended integration tests that run without the app), and where evidence and results go.
+- A second isolated document, the verification handoff, is created immediately after verification-contract approval and serves the P5 auto and P6 manual verification runs. It names the approved revisions, all three contract scenario categories and their tool/evidence plans, how to verify (prefer extended integration tests that run without the app), and where evidence and results go.
 
 ## Verification contract (starts after the implementation checkpoint; the verification handoff follows its approval)
 
 - State the kind: functional, benchmark, or both. Design a benchmark with the benchmark designer (`SKILL.md`, Optional tools).
 - List **high-level scenarios**, each with a code (`VER-001`, ...). They cover what routine test and CI runs do not show: spec-to-test matching (every approved spec has a covering test) and, as the milestone needs, user interactions, APIs, workflows and data consistency checks. Do not write step-by-step scripts and do not list "run the tests" as a scenario.
 - For each scenario: linked spec IDs, what to check, evidence to collect, **measurable pass condition**. Add environment and limitations.
-- Prefer extended integration tests that can run without running the app. For a benchmark, its session adds the harness it needs. Mark each scenario `auto` (P5) or `manual` (P6); either part may be empty. An optional full PR review (the PR reviewer on the whole PR) can be listed too. It runs only if the user approves the contract with it included.
+- Prefer extended integration tests that can run without running the app. For a benchmark, its session adds the harness it needs. Assign exactly one category: `auto_agent` (P5 automatically after P4 passes), `manual_agent` (P6 on an explicit user trigger, fully agent-executed), or `manual_user` (P6 with specified user interactions). Any category may be empty. Include the per-run tool, readiness and artifact plan from `references/verification-tools.md`. An optional full PR review (the PR reviewer on the whole PR) can be listed too. It runs only if the user approves the contract with it included.
 - For benchmarks only: comparison baseline, workload equivalence, repetitions/noise/invalid-run rules, and derivation method as relevant.
 - Name where raw evidence will be stored; do not assume it already exists.
 - Reconcile the draft with the currently approved specs before requesting approval. If materially affected by later changes, seek approval again before P5.
