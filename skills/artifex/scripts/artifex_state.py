@@ -42,13 +42,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import artifex_flow  # noqa: E402
+from artifex_host import detect_host
 
 SCHEMA = 1
 SECTIONS = {
     "initiative": ("ticket", "title", "mode", "mode_source", "request"),
     "status": ("phase", "status", "next"),
     "workspace": ("workdir", "workdir_kind", "work_folder", "project_folder", "artifact_folder", "source"),
-    "consent": ("status", "question", "response", "date", "source", "scope", "umbrella_route"),
+    "consent": ("status", "question", "response", "date", "source", "scope", "umbrella_route", "session_creation"),
     "delivery": ("status", "question", "response", "date", "source", "scope"),
 }
 TABLES = {
@@ -76,21 +77,6 @@ REVIEW_MESSAGE = ["The document holds every detail. Don't restate any of it in c
 
 class StateError(Exception):
     pass
-
-
-def detect_host(env=None) -> dict:
-    """Who is running this, from the environment; `ARTIFEX_HOST` overrides."""
-    env = os.environ if env is None else env
-    forced = env.get("ARTIFEX_HOST")
-    if env.get("CLAUDECODE") == "1" and forced in (None, "claude-code"):
-        return {"host": "claude-code", "entrypoint": env.get("CLAUDE_CODE_ENTRYPOINT"),
-                "session_id": env.get("CLAUDE_CODE_SESSION_ID"),
-                "host_session_id": env.get("CLAUDE_CODE_HOST_SESSION_ID")}
-    codex = [k for k in env if k.startswith("CODEX_") and k != "CODEX_HOME"]
-    if (codex and forced is None) or forced == "codex":
-        return {"host": "codex", "entrypoint": None,
-                "session_id": env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"), "host_session_id": None}
-    return {"host": forced or "unknown", "entrypoint": None, "session_id": None, "host_session_id": None}
 
 
 def doc_key(doc: str, milestone: str | None) -> tuple[str, str]:
@@ -236,7 +222,7 @@ def cmd_set(store: Store, args):
     if args.section == "initiative" and any(p.partition("=")[0].rstrip(":") == "track" for p in args.pairs):
         raise StateError("`track` is retired; an initiative's mode is fixed by `init`")
     fields = parse_pairs(args.pairs, SECTIONS[args.section])
-    if args.section in ("consent", "delivery") and {"question", "response", "status"} & set(fields):
+    if args.section in ("consent", "delivery") and {"question", "response", "status", "session_creation"} & set(fields):
         raise StateError(f"record {args.section} with the `{args.section}` command, which keeps the question "
                          "and reply verbatim")
     if args.section == "initiative" and {"mode", "mode_source"} & set(fields):
@@ -577,7 +563,7 @@ def next_commands(folder: Path, mode: str, source: str, parsed: dict, contract: 
     for key, value in request_overrides(args).items():
         if value and key != "mode":
             init += f' --{key.replace("_", "-")} "{value}"'
-    steps = [init, "Ask the consent and delivery questions; record them with `consent` and `delivery`."]
+    steps = [init, "Ask once for phase/replacement-session creation and bidirectional coordination, plus delivery authorization; record the verbatim replies with `consent --session-creation` and `delivery`."]
     if contract["result"] == "artifacts ready":
         flow = f'python "{SKILL_DIR / "scripts" / "artifex_flow.py"}"'
         mdir = (folder / "milestones" / mid).resolve()
@@ -624,7 +610,8 @@ def cmd_consent(store: Store, args):
     state = store.load()
     host = detect_host()
     merge(state["consent"], {
-        "status": args.status, "question": args.question, "response": args.response, "date": now()[:10],
+        "status": args.status, "session_creation": args.session_creation,
+        "question": args.question, "response": args.response, "date": now()[:10],
         "source": args.source, "scope": args.scope or state["consent"].get("scope"),
         "umbrella_route": args.route or host["host_session_id"] or host["session_id"]
         or state["consent"].get("umbrella_route"),
@@ -632,7 +619,7 @@ def cmd_consent(store: Store, args):
     return store.save(state)
 
 
-DELIVERY_SCOPE = ("implementation and verification sub agents may create the branch, commit, push to it and open "
+DELIVERY_SCOPE = ("implementation and verification phase workers may create the branch, commit, push to it and open "
                   "the pull request; merging, deploying and backporting are not included")
 
 
@@ -710,6 +697,12 @@ def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: st
     if ini.get("request"):
         lines += ["", "The user's request, verbatim:", _quote(ini["request"])]
     lines += ["", "## Coordination authorization"]
+    if consent.get("session_creation") == "authorized":
+        lines += ["The recorded authorization also covers creating phase and replacement sessions for this "
+                  "initiative; do not ask again before each creation. New scope still needs the user."]
+    else:
+        lines += ["Automatic session creation is not authorized by this record. Do not infer creation permission "
+                  "from coordination-only consent; use manual creation or obtain the expanded authorization once."]
     if consent["status"] == "authorized":
         lines += [
             f"On {consent.get('date')}, in {consent.get('source') or 'the umbrella chat'}, the umbrella asked the "
@@ -831,6 +824,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_route)
     p = sub.add_parser("consent")
     p.add_argument("--status", choices=["authorized", "declined", "manual relay"], required=True)
+    p.add_argument("--session-creation", choices=["authorized", "declined"],
+                   help="the same reply explicitly covers creating phase and replacement sessions")
     p.add_argument("--question", help="the question exactly as asked")
     p.add_argument("--question-file", help="a file holding the question verbatim")
     p.add_argument("--response", help="the user's reply exactly as written")

@@ -1,7 +1,5 @@
-# Completion rule (instructional; not a native configuration setting):
-# Do independent coordination, then use the exposed wait_agent (legacy: wait).
-# On timeout or user interruption, reconcile inventory before waiting again.
-# Keep the turn active until required results are consumed or monitoring is blocked.
-# No shell sleep/poll loop. See references/orchestration.md, Host completion rules.
+# Codex phase workers are independent chats authorized once per initiative.
+# End the umbrella turn after coordination; finalized-result messages resume it.
+# Do not use native waits or sleep/status loops. See references/orchestration.md.
 model = "gpt-6-luna"
 model_reasoning_effort = "low"

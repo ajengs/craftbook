@@ -11,7 +11,7 @@
 # Completion rule for the umbrella (instructional, not a Claude setting):
 # Background subagents: yield when no independent work remains; consume the
 # completion notification in its later turn and reconcile before other work.
-# Foreground subagents: the Agent call waits. Do not use a Codex wait/sleep loop.
+# Foreground subagents: the Agent call waits. Do not add a sleep/poll loop.
 # Separate phase sessions need their own verified coordination/wake channel.
 # See references/orchestration.md, Host completion rules, for sources and limits.
 
