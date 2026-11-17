@@ -34,8 +34,9 @@ List only selected capabilities. A required missing tool or artifact prevents a 
 ## Raw output location / derivation method
 
 ## Material limitations / exclusions
+Refer to rows of `tradeoffs.md` instead of restating them. List only what this contract's own method can't show.
 
 ## Open decisions
 Each question the user must answer before approval, with the options and a recommendation. None if there are none.
 
-Approval: pending. Reconcile to approved spec revision before seeking user approval; record decision in `state.json`. Approval does not authorize starting any other session.
+Approval: pending. Reconcile to approved spec revision before seeking user approval; record decision in `state.json`. Phase/replacement-session creation is covered separately by the initiative authorization. This approval permits P5 once review and handoff gates pass; P6 still requires the user's explicit trigger.

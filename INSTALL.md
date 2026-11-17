@@ -89,7 +89,7 @@ If your agent has no skills feature, use a skill as plain instructions: tell the
 ## What may not carry over
 
 Some behavior depends on the environment, not on the files:
-- sub agents and session creation (Artifex's umbrella, P3 to P6)
+- independent session creation and cross-session messaging for every Artifex phase on Codex; native helper/worker capabilities where other workflows or hosts use them
 - commentable document artifacts
 - schedulers (the optional status page, polling fallback)
 

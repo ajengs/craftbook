@@ -220,7 +220,28 @@ class BriefTests(unittest.TestCase):
 
     def test_declined_consent_briefs_manual_relay(self):
         self.consent(status="declined", response="no")
-        self.assertIn("Don't message the umbrella", self.brief("P1"))
+        text = self.brief("P1")
+        self.assertIn("Don't message the umbrella", text)
+        self.assertNotIn("send the umbrella", text)
+
+    def test_combined_authorization_covers_creation_and_replacements_once(self):
+        self.cli("consent", "--status", "authorized", "--session-creation", "authorized",
+                 "--question", "Create phase and replacement sessions and exchange coordination messages?",
+                 "--response", "Yes, for this initiative.", "--route", "umbrella")
+        self.assertEqual(self.state()["consent"]["session_creation"], "authorized")
+        self.cli("set", "consent", "session_creation=authorized", expect=2)
+        for phase in ("P1", "P2", "D1"):
+            args = (phase, "--milestone", "M1") if phase == "P2" else (phase,)
+            text = self.brief(*args)
+            self.assertIn("replacement sessions", text)
+            self.assertIn("do not ask again", text)
+            self.assertIn("Yes, for this initiative.", text)
+
+    def test_coordination_only_update_does_not_keep_stale_creation_permission(self):
+        self.cli("consent", "--status", "authorized", "--session-creation", "authorized",
+                 "--question", "Create and coordinate?", "--response", "yes")
+        self.consent()
+        self.assertFalse(self.state()["consent"].get("session_creation"))
 
     def test_p2_brief_needs_a_milestone_and_lists_approved_artifacts(self):
         self.consent()

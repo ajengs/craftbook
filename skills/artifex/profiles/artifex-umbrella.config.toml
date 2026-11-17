@@ -1,2 +1,5 @@
+# Codex phase workers are independent chats authorized once per initiative.
+# End the umbrella turn after coordination; finalized-result messages resume it.
+# Do not use native waits or sleep/status loops. See references/orchestration.md.
 model = "gpt-6-luna"
 model_reasoning_effort = "low"
