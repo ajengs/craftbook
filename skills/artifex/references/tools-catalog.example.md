@@ -1,0 +1,28 @@
+# Local verification tools catalog
+
+User-maintained candidates for Artifex verification plans. Add your own tools, skills and domains. These rows are examples, not mandatory collectors. Replace references with actual skill paths, connector names, executables or runbooks. Availability is **unchecked** until verified for the specific target run; leave no implied installation claim.
+
+| Domain / capability | Candidate tools or skills / reference | Artifacts | Why collect them | Readiness / prerequisites to check |
+|---|---|---|---|---|
+| Generic / request timing | Browser network capture or HAR exporter | HAR (redacted), request/action timestamps | Request count, timing, waterfall and duplicate calls | Unchecked: browser access, capture boundaries, credential redaction |
+| Cortex / duration breakdown and stack traces | `dam-debug-recording` | Debug recording zip, action/time mapping | Attribute request time and inspect recorded stack traces where supported | Unchecked: site access, recording controls, download and analyzer support |
+| Generic / process memory | Dump collector, dotMemory | Dump, dotMemory snapshot, process/container counters | Compare memory usage and inspect object retention; a dump alone is not a time series | Unchecked: target/runtime compatibility, capture permissions, storage and analyzer |
+| Generic / performance profiling | dotTrace | Timeline or sampling snapshot, capture settings | Locate CPU/wait costs and hot call paths | Unchecked: profiler installation, attach support, target access, capture overhead |
+| Redis / cache state | User-supplied read-only Redis snapshot/query tool | Scoped Redis snapshot or query output | Check key counts, TTLs, cache state and before/after changes | Unchecked: add exact tool/runbook, credentials, scope and data handling |
+| SQL / database state | User-supplied read-only SQL snapshot/query tool | SQL snapshot/query results, query plans where needed | Check persistence, query cost and data consistency | Unchecked: add exact tool/runbook, database access, scope and capture cost |
+| Generic / core interactions | Browser or UI automation screenshot capture | Screenshots for the specified interactions and states | Show rendered state and visible behavior; screenshots alone do not establish timing | Unchecked: browser/session access, reproducible state, output paths |
+| Observability / Grafana | `grafana-performance-metrics`, `ol-foundation:investigate-metrics`, or user-supplied Grafana tool | Dashboard screenshots or query-view links with query, instance and absolute time range | Correlate application behavior with resource metrics and traces | Unchecked: dashboard/query access, time range, labels and permissions |
+| dotTrace / timeline analysis | `dottrace-timeline-analysis` | Analysis tables/report plus source snapshot reference | Explain sampled or timeline costs from a collected snapshot | Unchecked: analyzer prerequisites and compatibility with snapshot format |
+| .NET / retained memory | `heap-dump-retained-size` | Retained-size ranking/report plus source dump reference | Identify which object owners retain memory | Unchecked: compatible dump/runtime, analyzer/symbol support |
+| Cortex Kubernetes / dump capture | `ephemeral-dump-capture` | Verified full dump, capture metadata | Acquire a heap artifact from the selected pod | Unchecked: Kubernetes access, target pod/runtime, disk space and verification |
+| Cortex Kubernetes / profile capture | `ephemeral-dottrace-capture` | dotTrace snapshot and collection metadata | Profile the selected instance/workload | Unchecked: Kubernetes access, profiler provisioning and snapshot download |
+| Kubernetes / local service access | `kubectl-port-forward` | Forward endpoint/lifecycle log (supporting evidence) | Reach a private dependency needed for the run | Unchecked: cluster/namespace/service access, local port availability and cleanup |
+| Cortex / debug capture | `dam-debug-recording` | Downloaded debug recording zip | Capture server-side evidence around a defined UI/API action | Unchecked: signed-in site session, controls and download path |
+| Cortex / UI-driven profile capture | `dam-dottrace-recording` | Downloaded dotTrace snapshot(s) | Compare captures around defined workload/parameter configurations | Unchecked: signed-in session, profiler controls, capture settings and download |
+| Link / meeting workflow | `link-meeting-test` | Created record reference, action log and screenshots as needed | Exercise meeting creation, agenda edits and completion state | Unchecked: supported test site, account and permission to create test records |
+| Cortex / API workload | `cortex-api-call` | Request/result log, timing and response assertions | Exercise a defined endpoint and assert its result | Unchecked: authenticated test session, endpoint/inputs and permitted side effects |
+| Cortex / DAM workflows | `dam-*` (resolve exact skill: e.g. `dam-navigation-test`, `dam-upload-test`, `dam-param-session`, `dam-agent-sessions`) | Action logs, asset/session references, screenshots and selected recordings | Exercise the relevant navigation, upload or configuration workflow | Unchecked: exact skill, supported site, fixtures, permissions and restoration requirements |
+
+## Add a capability
+
+Add a row with domain/capability, exact reference, artifact formats, the question each artifact answers, and readiness checks. A wildcard such as `dam-*` is a discovery hint: each run must name the actual selected skill. Record verified readiness in the run plan with date and target, rather than treating this reusable catalog as permanent proof.

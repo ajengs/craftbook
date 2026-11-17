@@ -6,7 +6,7 @@ depends_on: <none, or [items that must land first]>
 ---
 # Implementation handoff — <milestone>
 
-The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter); keep values literal.
+The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter); keep values literal. Quote values containing ` #`, for example `workdir: 'D:\Work #2\repo'`, so the hash is not treated as an inline comment.
 
 Approved specs, or the diagnosis for a bug: <path@revision>
 Branch, working directory, target and dependencies: see frontmatter. A `TBD` there is settled later with the user; the umbrella then passes the value as `handoff_context`, which replaces it.

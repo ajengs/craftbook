@@ -1,26 +1,33 @@
 ---
-auto: <[scenario ids marked auto], or []>
-manual: <[scenario ids marked manual], or []>
+auto_agent: <[auto agent run scenario ids], or []>
+manual_agent: <[manual agent run scenario ids], or []>
+manual_user: <[manual user run scenario ids], or []>
 ---
 # Verification handoff — <milestone>
 
-The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter) and must match the scenario sections below.
+The frontmatter is read by the router (`references/orchestration.md`, Handoff frontmatter) and must match the scenario sections below. Quote frontmatter values containing ` #` so the hash is not treated as an inline comment.
 
 Approved specs: <path@revision>
 Approved verification contract: <path@revision>
 Known tradeoffs and limitations: <path to `tradeoffs.md`>. Behavior inside a row's boundary that no scenario's pass condition covers is reported as known, not as a failure. Outside the boundary it is a finding. A row never relaxes a pass condition.
 Branch / PR: <given by the umbrella when it starts you>
-Run by: an isolated phase worker of the umbrella session, using the `artifex` skill. P5 auto verification (`workflows/P5-verification.md`) runs the auto scenarios. P6 manual verification (`workflows/P6-manual-verification.md`) runs the manual ones, on the user's trigger.
+Run by: an isolated phase worker of the umbrella session, using the `artifex` skill. P5 auto verification (`workflows/P5-verification.md`) runs the auto agent scenarios. P6 manual verification (`workflows/P6-manual-verification.md`) runs manual agent and manual user scenarios, on the user's trigger.
 Model / effort: <resolved selection from `SKILL.md`, Model allocation; separate reviewer selection if included; P6 selection when applicable; any override and reason>
 Execution: <independent phase chat on Codex; isolated worker on other hosts>
 Role configuration: <model/effort reference; not a native agent-type selection for a Codex chat>
 Session name: `<ticket id> P5 auto verification <additional context if any>` or `<ticket id> P6 manual verification <additional context if any>`
 
-## Auto scenarios (P5)
-Contract scenarios marked auto, functional and benchmark. Leave empty if there are none: P5 is then not applicable.
+## Auto agent runs (P5)
+Scenario IDs from `auto_agent`. Start automatically after passing P4 and ready approved inputs.
 
-## Manual scenarios (P6)
-Contract scenarios marked manual, functional and benchmark. Leave empty if there are none: P6 is then not applicable. They run only on the user's explicit trigger. A benchmark runs through the benchmark designer, and its session adds the harness it needs.
+## Manual agent runs (P6)
+Scenario IDs from `manual_agent`. Start only on the user's explicit trigger; the agent executes the entire run. Do not ask the user to operate the app or collect its evidence.
+
+## Manual user runs (P6)
+Scenario IDs from `manual_user`. Start only on the user's explicit trigger. Name agent preparation, exact user interactions, resume signal, evidence source and acceptance check. The agent pauses at those interactions; never invent a user action or observation.
+
+## Run tools, readiness and collection plan
+Copy the approved contract's per-run tool/evidence plan by reference and supply execution details: approved pinned catalog source/path/full SHA-256 (check it at execution; do not rediscover), exact skill paths or tool names, target environment, commands or invocation references, setup and collector start/stop timing, output paths, and cleanup. Carry every required/optional artifact, its purpose, readiness evidence, unresolved gap and owner. See `references/verification-tools.md`. Recheck readiness before execution; a material substitution changes the contract and needs approval.
 
 ## How to verify
 Prefer extended integration tests that run without running the app. Add explicit integration tests where a scenario needs one. Use the running app only when a scenario can't be checked otherwise.
