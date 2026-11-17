@@ -2,3 +2,4 @@ dist/
 
 # User-defined verification capabilities; keep personal references local.
 /artifex-tools.local.md
+__pycache__/

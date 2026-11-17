@@ -299,6 +299,16 @@ class NotifierTests(unittest.TestCase):
         repo = GitRepo(repo_root)
         mdir = self.root / "initiative" / "milestones" / "alpha"
         mdir.mkdir(parents=True)
+        import artifex_state as state
+        initiative = mdir.parent.parent
+        with contextlib.redirect_stdout(io.StringIO()):
+            state.main(["--dir", str(initiative), "init", "--mode", "project", "--mode-source", "explicit",
+                        "--request", "/artifex project TASK-1"])
+            state.main(["--dir", str(initiative), "delivery", "--status", "authorized",
+                        "--question", "May implementation agents push this branch?", "--response", "Yes"])
+            state.main(["--dir", str(initiative), "consent", "--status", "authorized",
+                        "--session-creation", "authorized", "--question", "May phase sessions be created?",
+                        "--response", "Yes", "--route", "test-umbrella"])
         handoff = mdir / "implementation-handoff.md"
         handoff.write_text(f"---\nbranch: feature\nworkdir: {repo.work}\ntarget: main\ndepends_on: none\n---\n",
                            encoding="utf-8")
@@ -323,9 +333,10 @@ class NotifierTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {notify.ENV_NAME: webhook}), \
                 mock.patch.object(notify, "_supervised_transport", side_effect=captured):
             invoke("init", "--milestone", "alpha", "--ticket", "TASK-1")
-            invoke("handoff", "--kind", "implementation", str(handoff))
+            handoff_result = invoke("handoff", "--kind", "implementation", str(handoff))
             self.assertEqual(payloads, [])
             session = flow.Session(mdir)
+            self.assertTrue(session.state["active"], handoff_result["actions"])
             run_id = next(iter(session.state["active"]))
             invoke("event", "started", "--run-id", run_id)
             invoke("next")
