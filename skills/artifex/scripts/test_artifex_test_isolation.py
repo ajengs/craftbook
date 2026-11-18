@@ -40,6 +40,41 @@ class TestModuleIsolationTests(unittest.TestCase):
                     send.assert_called_once()
                     self.assertTrue((Path(temp) / notify.DB_NAME).exists())
 
+    def test_module_lifecycle_disables_notifications_and_restores_environment(self):
+        for name in MODULES:
+            for webhook in (None, WEBHOOK):
+                for fail in (False, True):
+                    with self.subTest(module=name, webhook=bool(webhook), test_error=fail), \
+                            tempfile.TemporaryDirectory() as temp, mock.patch.dict(os.environ):
+                        importlib.import_module(name)
+                        if webhook is None:
+                            os.environ.pop(notify.ENV_NAME, None)
+                        else:
+                            os.environ[notify.ENV_NAME] = webhook
+                        before = dict(os.environ)
+
+                        def exercise(case):
+                            session = record_started(Path(temp))
+                            case.assertTrue(session.state["active"]["test-run"]["started"])
+                            case.assertNotIn(notify.ENV_NAME, os.environ)
+                            case.assertFalse((Path(temp) / notify.DB_NAME).exists())
+                            if fail:
+                                raise RuntimeError("deliberate test error")
+
+                        case_type = type("RouterNotificationCase", (unittest.TestCase,),
+                                         {"__module__": name, "test_record": exercise})
+                        result = unittest.TestResult()
+                        with mock.patch.object(notify, "_supervised_transport",
+                                               return_value=(200, {}, b"")) as send:
+                            unittest.TestSuite([case_type("test_record")]).run(result)
+                        self.assertEqual(result.testsRun, 1)
+                        self.assertEqual(result.failures, [])
+                        self.assertEqual(len(result.errors), int(fail), result.errors)
+                        if fail:
+                            self.assertIn("deliberate test error", result.errors[0][1])
+                        send.assert_not_called()
+                        self.assertEqual(dict(os.environ), before)
+
 
 if __name__ == "__main__":
     unittest.main()

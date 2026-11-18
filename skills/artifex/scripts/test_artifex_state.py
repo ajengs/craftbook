@@ -6,14 +6,23 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import artifex_flow as af  # noqa: E402
 import artifex_state as st  # noqa: E402
+
+
+def setUpModule():
+    environment = patch.dict(os.environ)
+    environment.start()
+    unittest.addModuleCleanup(environment.stop)
+    os.environ.pop("ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL", None)
 
 
 class StateCliTests(unittest.TestCase):
