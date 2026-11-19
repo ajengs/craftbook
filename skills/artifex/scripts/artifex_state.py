@@ -53,13 +53,31 @@ SECTIONS = {
     "delivery": ("status", "question", "response", "date", "source", "scope"),
 }
 TABLES = {
-    "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "status"),
+    "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "detached", "status"),
     "milestones": ("scope", "status", "session", "folder", "depends_on", "link"),
     "artifacts": ("path", "revision", "sha256", "decision", "date", "affects", "surface", "url", "host", "fallback",
                   "source"),
     "blockers": ("text", "since", "owner"),
     "polls": ("pr", "ci", "threads", "schedule", "last"),
 }
+DETACHED = ("yes", "refused")
+# The Claude Code desktop app addresses its sessions as local_<uuid>. An umbrella routed that way runs there,
+# where every phase session it starts stays linked to it, and wakes it on each turn end, until detached.
+APP_SESSION_PREFIX = "local_"
+SESSION_PHASES = ("P1", "P2", "D1")
+
+
+def on_app_sessions(state: dict) -> bool:
+    return str(state["consent"].get("umbrella_route") or "").startswith(APP_SESSION_PREFIX)
+
+
+def undetached_sessions(state: dict) -> list:
+    if not on_app_sessions(state):
+        return []
+    return [name for name, row in state["sessions"].items()
+            if row.get("role") in SESSION_PHASES and row.get("status") != "finished" and not row.get("detached")]
+
+
 STATUSES = ("draft", "pending approval", "implementing", "in review", "verifying", "ready for acceptance",
             "blocked", "closed")
 
@@ -240,6 +258,8 @@ def cmd_upsert(store: Store, args):
     fields = parse_pairs(args.pairs, TABLES[args.table])
     if args.table == "artifacts" and fields.get("decision") == "approved":
         raise StateError("record approvals with `doc approve`, which hashes the file and checks the review surface")
+    if args.table == "sessions" and fields.get("detached") not in (None, *DETACHED):
+        raise StateError(f"detached must be one of: {', '.join(DETACHED)}")
     state = store.load()
     if args.table == "milestones" and "status" in fields and fields["status"] is not None:
         folder = (state["milestones"].get(args.name) or {}).get("folder") or fields.get("folder") \
@@ -723,6 +743,15 @@ def brief(folder: Path, state: dict, phase: str, milestone: str | None, name: st
             + (f": {consent['scope']}" if consent.get("scope") else "") + ".",
             f"Umbrella route: {consent.get('umbrella_route') or 'not recorded'}.",
         ]
+        if on_app_sessions(state):
+            lines += [
+                "", "## Reporting to the umbrella",
+                "The umbrella detaches this session right after creating it, so the app no longer tells the "
+                "umbrella when your turns end. It hears from you only through messages: send every checkpoint, "
+                f"result, blocker and approval request with `SendMessage` to {consent['umbrella_route']}. Ending "
+                "your turn without sending reports nothing. Detaching moves this session out from under the "
+                "umbrella in the sidebar and changes nothing else.",
+            ]
     else:
         lines += [f"Not authorized (status: {consent['status']}). Don't message the umbrella; give every "
                   "checkpoint to the user to relay."]
@@ -742,7 +771,10 @@ def cmd_brief(store: Store, args):
 
 def cmd_show(store: Store, args):
     state = store.load()
-    return state[args.section] if args.section else state
+    if args.section:
+        return state[args.section]
+    pending = undetached_sessions(state)
+    return {**state, "attention": {"undetached_sessions": pending}} if pending else state
 
 
 def _cell(value) -> str:
@@ -792,6 +824,9 @@ def render(folder: Path, state: dict) -> str:
     out += [f"- {d['date']}: {d['text']}" + (f" ({', '.join(d['artifacts'])})" if d.get("artifacts") else "")
             for d in state["decisions"]] or ["None."]
     out += ["", "## Sessions", *_table(state["sessions"], TABLES["sessions"]), ""]
+    pending = undetached_sessions(state)
+    if pending:
+        out += ["Not detached yet, so each wakes the umbrella on every turn end: " + ", ".join(pending) + ".", ""]
     if state["polls"]:
         out += ["## PR polls", *_table(state["polls"], TABLES["polls"]), ""]
     out += ["## Coordination consent", *_fields(state["consent"]), "",

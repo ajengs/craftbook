@@ -102,6 +102,19 @@ class StateCliTests(unittest.TestCase):
         out = self.cli("render", "--out", str(self.dir / "STATE.md"))
         self.assertTrue(Path(out["written"]).exists())
 
+    def test_undetached_app_sessions_are_flagged_until_recorded(self):
+        self.cli("upsert", "sessions", "CRAFT-1 P1 research", "role=P1", "session_id=local_p1")
+        self.cli("upsert", "sessions", "CRAFT-1 P2 analysis M0", "role=P2", "status=finished")
+        self.assertNotIn("attention", self.cli("show"))
+        self.cli("consent", "--status", "authorized", "--question", "q", "--response", "yes", "--route", "local_u")
+        self.assertEqual(self.cli("show")["attention"], {"undetached_sessions": ["CRAFT-1 P1 research"]})
+        self.assertIn("Not detached yet, so each wakes the umbrella on every turn end: CRAFT-1 P1 research.",
+                      self.cli("render"))
+        self.cli("upsert", "sessions", "CRAFT-1 P1 research", "detached=maybe", expect=2)
+        self.cli("upsert", "sessions", "CRAFT-1 P1 research", "detached=refused")
+        self.assertNotIn("attention", self.cli("show"))
+        self.assertNotIn("Not detached yet", self.cli("render"))
+
     def test_render_artifact_table_shows_source_column_only_when_recorded(self):
         self.cli("upsert", "artifacts", "kickoff", "path=kickoff.md", "decision=pending")
         self.assertNotIn("| Source |", self.cli("render"))
@@ -213,6 +226,13 @@ class BriefTests(unittest.TestCase):
         self.assertIn("Umbrella route: local_u", text)
         self.assertIn("doc surface kickoff", text)
         self.assertIn('named "T-1 P1 research"', text)
+        self.assertIn("## Reporting to the umbrella", text)
+        self.assertIn("with `SendMessage` to local_u", text)
+
+    def test_brief_asks_for_message_reports_only_on_an_app_session_route(self):
+        self.cli("consent", "--status", "authorized", "--question", self.QUESTION, "--response", "yes",
+                 "--route", "thread-umbrella")
+        self.assertNotIn("## Reporting to the umbrella", self.brief("P1"))
 
     def test_delivery_from_the_invocation_is_quoted_in_the_brief(self):
         self.consent()
