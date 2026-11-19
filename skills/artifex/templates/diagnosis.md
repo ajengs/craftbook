@@ -21,6 +21,9 @@ One entry per source, for the reported instance and time window or version:
 
 Unavailable or not checked: <list, and why>.
 
+### Proof
+The excerpts that prove the root cause, in this file (`standards/evidence.md`, Evidence in one file): sample exceptions with counts, the stack traces in code blocks, log lines, metric values with window-scoped links, screenshots, dump or profiler output, test output. Each one names its source file or link. Redact customer data.
+
 ## Reproduction
 Run: <command or steps>. Kind: <automatic | manual | none>. Files: <paths in the milestone folder>.
 Result: <red, with the exact output that matches the symptom>. Minimised: <what was cut and why the rest is load-bearing>.

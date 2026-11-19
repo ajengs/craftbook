@@ -19,6 +19,6 @@ Before execution, check the per-run tools and evidence plan against the current 
 5. On `fail`, route as in P5: defects to P3, design/spec issues to P2, invalid research assumptions to P1, major findings to a bug investigation (D1), through the umbrella; unclear cases to user triage.
 6. On `pass`, with P5 also passed or not applicable, mark **ready for acceptance** and request **explicit user sign-off**. Only the umbrella may record `closed` after that approval.
 
-**Output:** The verification report extended with the manual scenarios' results and a verdict.
+**Output:** The verification report extended with the manual scenarios' results and a verdict, with their evidence excerpts in the report (`standards/evidence.md`, Evidence in one file).
 
 **Exit:** User signs off closure. **Deployment, merging and backports are outside this six-phase skill** unless separately authorized and defined; successful verification does not authorize them.
