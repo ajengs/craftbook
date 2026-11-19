@@ -34,7 +34,7 @@ Every choice that would change the code's shape if reopened: test approach, test
 - Then make the change in a separate commit containing the proposed changes and their tests.
 - Write no comments. If context is absolutely necessary, add the why in at most 3 lines.
 - Follow `SKILL.md`, Execution efficiency, for context, tool output and session transitions, and `policies/core.md`, Autonomous execution, for debugging and escalation.
-- Internal codes (Artifex ids like SPEC- and VER-, phase codes, any other code coined in sessions) stay in notes. Don't put them in code, tests, commits, PRs or ticket comments; describe the behavior in words.
+- Internal codes (Artifex ids like SPEC-, VER- and REP-, phase codes, any other code coined in sessions) stay in notes. Don't put them in code, tests, commits, PRs or ticket comments; describe the behavior in words.
 - You may run build, test, commit, push and open pull requests, as the user's `delivery_authorization` in your assigned inputs grants. Don't ask again for what it covers. Merging, deploying and backporting are not covered.
 - End by writing the result file to the `result_path` the umbrella gave you and report the finalized path as `references/orchestration.md`, Result delivery describes (`references/orchestration.md`, Result file).
 

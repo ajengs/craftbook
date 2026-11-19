@@ -173,7 +173,7 @@ A result that fails any check halts the router as `result_rejected`, and the run
   - the head is one this PR has had.
 - **P3 `completed`, and P5 or P6 with `pushed_head`:**
   - `origin/<branch>` points at the reported commit;
-  - the pushed commits' messages and added lines contain no internal codes (`SPEC-n`, `VER-n` and any `--code-pattern` from `init`);
+  - the pushed commits' messages and added lines contain no internal codes (`SPEC-n`, `VER-n`, `REP-n` and any `--code-pattern` from `init`);
   - a rework that answers findings actually added commits.
 - **P5 and P6:**
   - every assigned scenario has an outcome;
@@ -236,4 +236,4 @@ Without `--run-id`, `event complete` finishes the queued P3 instead, the one a d
 - **Not a lock.** The single umbrella is the only caller, and two router processes on one milestone at once are not protected against.
 - **Polls are the umbrella's job.** The router doesn't fetch CI or PR threads, so it stays provider-neutral.
 - **Approvals stay in `state.json`.** The router trusts that a handoff is recorded only after its controlling approval (`policies/core.md`). It gates on the handoff being recorded and unchanged, not on the approval itself.
-- **Bug track with P5 not applicable.** When the diagnosis has no auto scenario because CI runs the regression test, the router posts sign-off once the review passes. The umbrella still confirms CI is passing (`CI:` in `status`, or `none` when the repository has no CI) before asking (`workflows/D1-bug-investigation.md`, Verification).
+- **Bug track always runs P5.** Every diagnosis lists VER-001, reproduction verification, under `auto_agent`, so P5 runs after the review passes even when CI runs the regression test: P5 then checks P3's red run and the CI result for that exact head (`workflows/D1-bug-investigation.md`, Verification).

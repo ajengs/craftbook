@@ -46,7 +46,7 @@ REVIEW_CAP = 3
 CYCLE_CAPS = {"initial": REVIEW_CAP, "p5_rework": 1, "incremental": 1}
 P5_REWORK_CAP = 2
 RETRIES = 1
-DEFAULT_CODE_PATTERNS = [r"\b(?:SPEC|VER)-\d+\b"]
+DEFAULT_CODE_PATTERNS = [r"\b(?:SPEC|VER|REP)-\d+\b"]
 DEFAULT_DOC_PATTERNS = ["*.md", "*.markdown", "*.rst", "*.txt", "*.adoc", "docs/*", "doc/*"]
 
 PHASES = {

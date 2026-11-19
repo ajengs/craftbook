@@ -30,7 +30,7 @@ These are **boundaries**, not a second workflow. Applies wherever relevant acros
 
 ## Internal codes stay in notes
 
-- Codes we coin for tracking live only in notes: artifacts, `state.json`, handoffs and the status page. That covers Artifex ids such as `SPEC-`, `VER-` and `LIM-`, phase and gate codes, and any other internal code introduced during a session.
+- Codes we coin for tracking live only in notes: artifacts, `state.json`, handoffs and the status page. That covers Artifex ids such as `SPEC-`, `VER-`, `REP-` and `LIM-`, phase and gate codes, and any other internal code introduced during a session.
 - Never put them in code, tests or test names, comments, commit messages, PR titles, descriptions or comments, ticket comments, or any other surface outside the notes. Describe the behavior in words instead. Ticket ids are a team convention and stay.
 - This applies in every phase, and to any code added later.
 
