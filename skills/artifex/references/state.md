@@ -21,6 +21,8 @@ Run `python <skill>/scripts/artifex_state.py --dir <initiative folder> <command>
 | `upsert <table> <name> key=value ...` | Add or update one row of `sessions`, `milestones`, `artifacts`, `blockers` or `polls` |
 | `remove <table> <name>` | Drop a row, such as a resolved blocker |
 | `decide "<text>" [--artifact <name>]` | Append a material decision with its rationale |
+| `supersede <document> --section <where> --kind changed\|rejected\|stale --was <old> [--now <new>] --reason <why> [--source <who/what>] [--phase <p>] [--milestone <id>]` | Append one line to `superseded.jsonl` (initiative folder): a value a document no longer holds, after the document was edited to the new one. Any phase may append; it never touches `state.json`. `--was-file` / `--now-file` take long text |
+| `superseded [--document <d>] [--milestone <id>] [--kind <k>]` | Print that log as JSON, filtered |
 | `show [--section <name>]` | Print the JSON, when recovering or answering a question |
 | `render [--out <path>]` | Produce `STATE.md` for the user |
 | `host` | Print the host and this session's own ids; a new phase session reports its `session_id` from this |

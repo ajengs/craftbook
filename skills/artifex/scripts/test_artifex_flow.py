@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -22,6 +22,10 @@ def setUpModule():
     environment.start()
     unittest.addModuleCleanup(environment.stop)
     os.environ.pop("ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL", None)
+    # Unit tests use FakeGit; real git is covered by test_artifex_git_integration.py.
+    no_git = patch.object(af.Git, "run", side_effect=AssertionError("unit tests must not launch git"))
+    no_git.start()
+    unittest.addModuleCleanup(no_git.stop)
 
 
 def sha(n: int) -> str:
@@ -134,6 +138,32 @@ class HappyPathTests(unittest.TestCase):
         sim = Sim(auto=(), manual=())
         sim.to_review_pass()
         self.assertEqual(sim.kinds()[-1], "ready_for_acceptance")
+
+    def p3_evidence_sim(self, auto, p3_evidence):
+        sim = Sim(verification=False)
+        sim.apply({"type": "handoff", "kind": "verification", "path": "diagnosis.md", "sha256": "d" * 64,
+                   "fields": {"auto_agent": list(auto), "manual_agent": [], "manual_user": [],
+                              "p3_evidence": list(p3_evidence)}})
+        return sim
+
+    def test_auto_scenarios_settled_by_p3_skip_p5_and_go_to_sign_off(self):
+        sim = self.p3_evidence_sim(auto=("VER-001",), p3_evidence=("VER-001",))
+        sim.to_review_pass()
+        self.assertEqual(sim.spawned(), [])
+        self.assertEqual(sim.kinds()[-1], "ready_for_acceptance")
+
+    def test_p5_runs_only_the_auto_scenarios_p3_does_not_settle(self):
+        sim = self.p3_evidence_sim(auto=("VER-001", "VER-002"), p3_evidence=("VER-001",))
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        self.assertEqual(p5["inputs"]["scenarios"], ["VER-002"])
+        sim.result(p5["run_id"], head=sha(1), scenarios={"VER-002": "pass"})
+        self.assertEqual(sim.kinds()[-1], "ready_for_acceptance")
+
+    def test_p3_evidence_must_name_auto_scenarios(self):
+        with self.assertRaises(af.FlowError):
+            af.validate_verification_fields({"auto_agent": [], "manual_agent": [], "manual_user": ["VER-001"],
+                                             "p3_evidence": ["VER-001"]})
 
 
 class IdleReasonTests(unittest.TestCase):
@@ -582,44 +612,223 @@ class FrontmatterTests(unittest.TestCase):
         self.assertEqual(data["manual"], ["V3"])
 
 
-def git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
+class FakeGit:
+    """In-memory stand-in for af.Git, so the unit tests launch no git process.
 
+    It models one clone: an object store, local branches, the checked-out
+    branch, the remote's branches and the remote-tracking refs that fetch and
+    push update. A patch id is derived from each commit's (path, old, new)
+    changes, so a rebase that replays the same changes keeps its patch ids.
+    test_artifex_git_integration.py checks the real adapter against git.
+    """
 
-class GitRepo:
-    def __init__(self, root: Path):
-        self.origin = root / "origin.git"
-        self.work = root / "work"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
-        subprocess.run(["git", "clone", "-q", str(self.origin), str(self.work)], check=True, capture_output=True)
-        git(self.work, "config", "user.email", "t@example.com")
-        git(self.work, "config", "user.name", "t")
-        git(self.work, "checkout", "-q", "-b", "main")
+    def __init__(self):
+        self.commits = {}
+        self.order = []
+        self.branches = {}
+        self.origin = {}
+        self.tracking = {}
+        self.head = "main"
         self.commit("app.py", "a = 1\n", "base")
-        git(self.work, "push", "-q", "origin", "main")
-        git(self.work, "checkout", "-q", "-b", "feature")
+        self.push("main")
+        self.branch("feature")
+
+    # Builder API used by the tests -------------------------------------------
+
+    def _add(self, parents, message, tree, conflict=False):
+        sha_ = hashlib.sha1(f"{len(self.order)}:{message}:{parents}".encode()).hexdigest()
+        before = self.commits[parents[0]]["tree"] if parents else {}
+        changes = {p: (before.get(p), tree.get(p)) for p in set(before) | set(tree) if before.get(p) != tree.get(p)}
+        self.commits[sha_] = {"parents": list(parents), "message": message, "tree": tree,
+                              "changes": changes, "conflict": conflict}
+        self.order.append(sha_)
+        self.branches[self.head] = sha_
+        return sha_
+
+    def tip(self):
+        return self.branches.get(self.head)
 
     def commit(self, path, text, message):
-        target = self.work / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-        git(self.work, "add", path)
-        git(self.work, "commit", "-q", "-m", message)
-        return git(self.work, "rev-parse", "HEAD")
+        tip = self.tip()
+        tree = dict(self.commits[tip]["tree"]) if tip else {}
+        tree[path] = text
+        return self._add([tip] if tip else [], message, tree)
+
+    def checkout(self, name):
+        if name not in self.branches:
+            raise AssertionError(f"no branch {name}")
+        self.head = name
+
+    def branch(self, name, start=None):
+        self.branches[name] = self._must(start) if start else self.tip()
+        self.head = name
+
+    def push(self, branch, src=None, force=False):
+        new = self.branches[src or branch]
+        old = self.origin.get(branch)
+        if old and not force and not self.is_ancestor(old, new):
+            raise AssertionError(f"non-fast-forward push to {branch}")
+        self.origin[branch] = self.tracking[branch] = new
+
+    def merge(self, branch, resolution=None):
+        """Merge branch into the current one; resolution maps each conflicting path to its resolved text."""
+        ours, theirs = self.tip(), self._must(branch)
+        base = self.commits[self.merge_base(ours, theirs)]["tree"]
+        ours_tree, theirs_tree = self.commits[ours]["tree"], self.commits[theirs]["tree"]
+        tree, conflicts = dict(ours_tree), []
+        for path in set(base) | set(theirs_tree):
+            if theirs_tree.get(path) == base.get(path):
+                continue
+            if ours_tree.get(path) not in (base.get(path), theirs_tree.get(path)):
+                conflicts.append(path)
+            tree[path] = theirs_tree.get(path)
+        if sorted(conflicts) != sorted(resolution or {}):
+            raise AssertionError(f"conflicts {sorted(conflicts)} need a resolution, got {sorted(resolution or {})}")
+        tree.update(resolution or {})
+        return self._add([ours, theirs], f"Merge branch '{branch}'", tree, conflict=bool(conflicts))
+
+    def rebase(self, onto):
+        replay = [c for c in reversed(self._range(onto, self.tip())) if len(self.commits[c]["parents"]) < 2]
+        self.branches[self.head] = self._must(onto)
+        for old in replay:
+            tree = dict(self.commits[self.tip()]["tree"])
+            for path, (before, after) in self.commits[old]["changes"].items():
+                if tree.get(path) != before:
+                    raise AssertionError(f"rebase conflict in {path}")
+                tree[path] = after
+            self._add([self.tip()], self.commits[old]["message"], tree)
+        return self.tip()
+
+    # af.Git interface ---------------------------------------------------------
+
+    def _resolve(self, ref):
+        if ref in self.commits:
+            return ref
+        for prefix, refs in (("refs/heads/", self.branches), ("refs/remotes/origin/", self.tracking),
+                             ("origin/", self.tracking), ("", self.branches)):
+            if ref.startswith(prefix) and ref[len(prefix):] in refs:
+                return refs[ref[len(prefix):]]
+        return None
+
+    def _must(self, ref):
+        sha_ = self._resolve(ref)
+        if sha_ is None:
+            raise af.GitError(f"unknown revision {ref}")
+        return sha_
+
+    def _reach(self, ref):
+        seen, stack = set(), [self._must(ref)]
+        while stack:
+            c = stack.pop()
+            if c not in seen:
+                seen.add(c)
+                stack.extend(self.commits[c]["parents"])
+        return seen
+
+    def _range(self, old, new, exclude=None):
+        """old..new (minus exclude), newest first like rev-list."""
+        hide = self._reach(old) | (self._reach(exclude) if exclude else set())
+        return sorted(self._reach(new) - hide, key=self.order.index, reverse=True)
+
+    def _is_merge(self, c):
+        return len(self.commits[c]["parents"]) > 1
+
+    def is_ancestor(self, older, newer) -> bool:
+        a, b = self._resolve(older), self._resolve(newer)
+        return a is not None and b is not None and a in self._reach(b)
+
+    def commit_exists(self, sha_) -> bool:
+        return sha_ in self.commits
+
+    def patch_ids(self, base, tip) -> list:
+        return sorted(hashlib.sha1(repr(sorted(self.commits[c]["changes"].items())).encode()).hexdigest()
+                      for c in self._range(base, tip) if not self._is_merge(c))
+
+    def paths(self, commit) -> list:
+        return [] if self._is_merge(commit) else sorted(self.commits[commit]["changes"])
+
+    def fetch(self, *refs, check=True):
+        for ref in refs:
+            if ref in self.origin:
+                self.tracking[ref] = self.origin[ref]
+            elif check:
+                raise af.GitError(f"couldn't find remote ref {ref}")
+
+    def rev_parse(self, ref, verify=False) -> str:
+        sha_ = self._resolve(ref)
+        if sha_ is None and not verify:
+            raise af.GitError(f"unknown revision {ref}")
+        return sha_ or ""
+
+    def merge_base(self, a, b) -> str:
+        common = self._reach(a) & self._reach(b)
+        if not common:
+            raise af.GitError(f"no merge base for {a} and {b}")
+        return max(common, key=self.order.index)
+
+    def merges_between(self, old, new) -> list:
+        return [c for c in self._range(old, new) if self._is_merge(c)]
+
+    def remerge_diff(self, merge) -> str:
+        return "conflict resolution\n" if self.commits[merge]["conflict"] else ""
+
+    def own_commits(self, old, new, target_ref) -> list:
+        return [c for c in self._range(old, new, exclude=target_ref) if not self._is_merge(c)]
+
+    def count_between(self, base, tip) -> int:
+        return len(self._range(base, tip))
+
+    def messages(self, base, tip) -> str:
+        return "\n\n".join(self.commits[c]["message"] for c in self._range(base, tip))
+
+    def diff(self, base, tip) -> str:
+        old, new = self.commits[self._must(base)]["tree"], self.commits[self._must(tip)]["tree"]
+        lines = []
+        for path in sorted(p for p in set(old) | set(new) if old.get(p) != new.get(p)):
+            before, after = (old.get(path) or "").splitlines(), (new.get(path) or "").splitlines()
+            lines += [f"--- a/{path}", f"+++ b/{path}"]
+            lines += ["-" + line for line in before if line not in after]
+            lines += ["+" + line for line in after if line not in before]
+        return "\n".join(lines)
+
+
+class FakeGitTests(unittest.TestCase):
+    """The fake's own semantics, where the router tests lean on them."""
+
+    def test_rebase_keeps_patch_ids_and_a_changed_patch_does_not(self):
+        repo = FakeGit()
+        old = repo.commit("feature.py", "x = 1\n", "feature")
+        before = repo.patch_ids("main", old)
+        repo.checkout("main")
+        repo.commit("other.py", "y = 1\n", "unrelated")
+        repo.checkout("feature")
+        new = repo.rebase("main")
+        self.assertNotEqual(old, new)
+        self.assertEqual(repo.patch_ids("main", new), before)
+        repo.commit("feature.py", "x = 2\n", "change")
+        self.assertNotEqual(repo.patch_ids("main", repo.tip()), before)
+
+    def test_push_updates_origin_and_tracking_and_refuses_non_fast_forward(self):
+        repo = FakeGit()
+        head = repo.commit("feature.py", "x = 1\n", "feature")
+        self.assertEqual(repo.rev_parse("origin/feature", verify=True), "")
+        repo.push("feature")
+        self.assertEqual(repo.rev_parse("origin/feature"), head)
+        repo.branch("other", "main")
+        repo.commit("other.py", "y = 1\n", "unrelated")
+        with self.assertRaises(AssertionError):
+            repo.push("feature", src="other")
+        with self.assertRaises(af.GitError):
+            repo.fetch("missing")
 
 
 class GitClassifyTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.repo = GitRepo(Path(self.tmp.name))
-        self.git = af.Git(self.repo.work)
+        self.repo = FakeGit()
         self.old = self.repo.commit("feature.py", "x = 1\n", "feature")
 
-    def tearDown(self):
-        self.tmp.cleanup()
-
     def classify(self, new):
-        return af.classify_push(self.git, self.old, new, "main", af.DEFAULT_DOC_PATTERNS)["class"]
+        return af.classify_push(self.repo, self.old, new, "main", af.DEFAULT_DOC_PATTERNS)["class"]
 
     def test_docs_only(self):
         self.assertEqual(self.classify(self.repo.commit("docs/guide.md", "hi\n", "docs")), "docs")
@@ -631,50 +840,43 @@ class GitClassifyTests(unittest.TestCase):
         self.assertEqual(self.classify(self.old), "none")
 
     def test_rebase_with_unchanged_patches(self):
-        git(self.repo.work, "checkout", "-q", "main")
+        self.repo.checkout("main")
         self.repo.commit("other.py", "y = 1\n", "unrelated")
-        git(self.repo.work, "checkout", "-q", "feature")
-        git(self.repo.work, "rebase", "-q", "main")
-        self.assertEqual(self.classify(git(self.repo.work, "rev-parse", "HEAD")), "rebase")
+        self.repo.checkout("feature")
+        self.assertEqual(self.classify(self.repo.rebase("main")), "rebase")
 
     def test_clean_merge_of_target(self):
-        git(self.repo.work, "checkout", "-q", "main")
+        self.repo.checkout("main")
         self.repo.commit("other.py", "y = 1\n", "unrelated")
-        git(self.repo.work, "checkout", "-q", "feature")
-        git(self.repo.work, "merge", "-q", "--no-edit", "main")
-        self.assertEqual(self.classify(git(self.repo.work, "rev-parse", "HEAD")), "merge")
+        self.repo.checkout("feature")
+        self.assertEqual(self.classify(self.repo.merge("main")), "merge")
 
     def test_merge_with_conflict_resolution_is_code(self):
-        git(self.repo.work, "checkout", "-q", "main")
+        self.repo.checkout("main")
         self.repo.commit("feature.py", "x = 'main'\n", "conflicting")
-        git(self.repo.work, "checkout", "-q", "feature")
-        subprocess.run(["git", "-C", str(self.repo.work), "merge", "-q", "main"], capture_output=True)
-        (self.repo.work / "feature.py").write_text("x = 'resolved'\n", encoding="utf-8")
-        git(self.repo.work, "add", "feature.py")
-        git(self.repo.work, "commit", "-q", "--no-edit")
-        self.assertEqual(self.classify(git(self.repo.work, "rev-parse", "HEAD")), "code")
+        self.repo.checkout("feature")
+        merge = self.repo.merge("main", resolution={"feature.py": "x = 'resolved'\n"})
+        self.assertEqual(self.classify(merge), "code")
 
     def test_internal_code_hits_in_message_and_added_lines(self):
         new = self.repo.commit("feature.py", "x = 1  # covers VER-12\n", "implement SPEC-3")
-        self.assertEqual(af.internal_code_hits(self.git, self.old, new, af.DEFAULT_CODE_PATTERNS),
+        self.assertEqual(af.internal_code_hits(self.repo, self.old, new, af.DEFAULT_CODE_PATTERNS),
                          ["SPEC-3", "VER-12"])
 
 
 class CliTests(unittest.TestCase):
-    """End to end through main(), with a real repo as the implementation workdir."""
+    """End to end through main(), for commands that never reach git: the handoff's workdir doesn't exist."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
-        self.repo = GitRepo(root)
         self.mdir = root / "initiative" / "milestones" / "M1"
         self.mdir.mkdir(parents=True)
+        self.work = root / "work"
         (self.mdir / "implementation-handoff.md").write_text(
-            f"---\nbranch: feature\nworkdir: {self.repo.work}\ntarget: main\ndepends_on: none\n---\n# Handoff\n",
+            f"---\nbranch: feature\nworkdir: {self.work}\ntarget: main\ndepends_on: none\n---\n# Handoff\n",
             encoding="utf-8")
-
-    def tearDown(self):
-        self.tmp.cleanup()
 
     def cli(self, *args, expect=0):
         out, err = io.StringIO(), io.StringIO()
@@ -687,21 +889,6 @@ class CliTests(unittest.TestCase):
         path = self.mdir / "results" / f"{run_id}.json"
         path.write_text(json.dumps({"run_id": run_id, **env}), encoding="utf-8")
         return str(path)
-
-    def test_init_handoff_result_routes_to_review(self):
-        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
-        out = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
-        p3 = out["actions"][0]
-        self.assertEqual(p3["action"], "spawn")
-        self.assertTrue(Path(p3["result_path"]).is_absolute())
-
-        head = self.repo.commit("feature.py", "x = 1\n", "feature")
-        git(self.repo.work, "push", "-q", "origin", "feature")
-        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
-                                               pr_url="https://example/pr/1"))
-        self.assertEqual([c["kind"] for c in out["checkpoints"]], ["pr_opened"])
-        self.assertEqual(out["actions"][0]["phase"], "P4")
-        self.assertIn("Active runs: M1-P4-1 (P4, not confirmed started)", self.cli("status"))
 
     def test_init_takes_no_track_and_stores_none(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
@@ -723,19 +910,6 @@ class CliTests(unittest.TestCase):
             self.assertEqual(af.main(["status", "--dir", str(other)]), 0, err.getvalue())
         self.assertEqual(out.getvalue(), plain)
         self.assertNotIn("track", af.fold(af.read_events(other)))
-
-    def test_unpushed_head_and_internal_codes_are_rejected(self):
-        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
-        p3 = self.cli("handoff", "--kind", "implementation",
-                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
-        git(self.repo.work, "push", "-q", "origin", "feature")
-        head = self.repo.commit("feature.py", "x = 1\n", "implement SPEC-3")
-        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
-                                               pr_url="https://example/pr/1"))
-        problems = out["checkpoints"][0]["problems"]
-        self.assertTrue(any("not the reported" in p for p in problems), problems)
-        self.assertTrue(any("SPEC-3" in p for p in problems), problems)
-        self.assertEqual(out["actions"][0]["action"], "halted")
 
     def test_modified_handoff_blocks_dispatch_until_recorded_again(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
@@ -760,34 +934,6 @@ class CliTests(unittest.TestCase):
         self.cli("event", "resume", "--note", "x", expect=2)
         self.assertEqual((self.mdir / "run.jsonl").read_text(encoding="utf-8"), before)
 
-    def blocked_p3(self):
-        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
-        p3 = self.cli("handoff", "--kind", "implementation",
-                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
-        self.cli("event", "started", "--run-id", p3["run_id"])
-        head = self.repo.commit("feature.py", "x = 1\n", "feature")
-        git(self.repo.work, "push", "-q", "origin", "feature")
-        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="blocked", head=head,
-                                               summary="pushed; gh is not authenticated, no PR"))
-        self.assertEqual(out["actions"][0]["action"], "halted")
-        return p3["run_id"], head
-
-    def test_umbrella_completes_a_blocked_run_and_review_starts(self):
-        run_id, head = self.blocked_p3()
-        out = self.cli("event", "complete", "--run-id", run_id, "--head", head,
-                       "--pr-url", "https://example/pr/1", "--note", "user opened the PR")
-        self.assertIn("pr_opened", [c["kind"] for c in out["checkpoints"]])
-        self.assertEqual((out["actions"][0]["action"], out["actions"][0]["phase"]), ("spawn", "P4"))
-        self.assertEqual(af.read_events(self.mdir)[-2]["push"], {"class": "initial"})
-
-    def test_complete_refuses_a_head_that_is_not_on_the_remote(self):
-        run_id, _ = self.blocked_p3()
-        local = self.repo.commit("feature.py", "x = 2\n", "not pushed")
-        self.cli("event", "complete", "--run-id", run_id, "--head", local,
-                 "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
-        self.cli("event", "complete", "--run-id", run_id, "--head", local, "--pr-url", "https://example/pr/1",
-                 "--note", "x", "--override", "user pushes it next")
-
     def test_placeholder_handoff_waits_for_context_then_spawns_with_it(self):
         (self.mdir / "implementation-handoff.md").write_text(
             "---\nbranch: TBD\nworkdir: <confirmed by the user>\ntarget: main\ndepends_on: none\n---\n",
@@ -796,11 +942,10 @@ class CliTests(unittest.TestCase):
         out = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
         self.assertEqual(out["checkpoints"][-1]["open"], ["branch", "workdir"])
         self.assertEqual(out["actions"][0]["action"], "wait")
-        out = self.cli("event", "context", "--branch", "feature", "--workdir", str(self.repo.work))
+        out = self.cli("event", "context", "--branch", "feature", "--workdir", str(self.work))
         p3 = out["actions"][0]
         self.assertEqual(p3["action"], "spawn")
-        self.assertEqual(p3["inputs"]["handoff_context"], {"branch": "feature", "workdir": str(self.repo.work)})
-
+        self.assertEqual(p3["inputs"]["handoff_context"], {"branch": "feature", "workdir": str(self.work)})
 
     def test_dir_is_accepted_before_or_after_the_event_name(self):
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
@@ -824,10 +969,116 @@ class CliTests(unittest.TestCase):
         again = self.cli("handoff", "--kind", "implementation", handoff)["checkpoints"]
         self.assertNotIn("compact_umbrella", [c["kind"] for c in again])
 
+    def test_invalid_verification_frontmatter_never_records_a_handoff(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        path = self.mdir / "verification-handoff.md"
+        before = (self.mdir / "run.jsonl").read_bytes()
+        for text in ("# Missing frontmatter", "---\nauto_agnet: [A]\n---\n",
+                     "---\nauto_agent: [A]\nmanual_agent: [A]\nmanual_user: []\n---\n"):
+            path.write_text(text, encoding="utf-8")
+            self.cli("handoff", "--kind", "verification", str(path), expect=2)
+            self.assertEqual((self.mdir / "run.jsonl").read_bytes(), before)
+
+    def test_runs_report_lists_agent_ids_and_windows(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "u1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        self.cli("event", "started", "--run-id", p3["run_id"], "--agent", "agent-abc")
+        self.cli("event", "umbrella", "--session", "u2")
+        report = self.cli("runs")
+        run = report["runs"][p3["run_id"]]
+        self.assertEqual((run["phase"], run["agent"], run["ended"]), ("P3", "agent-abc", None))
+        self.assertTrue(run["dispatched"] and run["started"])
+        self.assertEqual([u["session"] for u in report["umbrella"]], ["u1", "u2"])
+        self.assertEqual(report["umbrella"][0]["to"], report["umbrella"][1]["from"])
+        self.assertEqual(report["runs_without_agent_id"], [])
+
+
+class CliGitTests(unittest.TestCase):
+    """End to end through main(), with FakeGit as the implementation workdir's repository."""
+
+    cli = CliTests.cli
+    result_file = CliTests.result_file
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.work = root / "work"
+        self.work.mkdir()
+        self.repo = FakeGit()
+
+        def open_repo(workdir):
+            self.assertEqual(Path(workdir), self.work)
+            return self.repo
+
+        self.enterContext(patch.object(af, "Git", open_repo))
+        self.mdir = root / "initiative" / "milestones" / "M1"
+        self.mdir.mkdir(parents=True)
+        (self.mdir / "implementation-handoff.md").write_text(
+            f"---\nbranch: feature\nworkdir: {self.work}\ntarget: main\ndepends_on: none\n---\n# Handoff\n",
+            encoding="utf-8")
+
+    def test_init_handoff_result_routes_to_review(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        out = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
+        p3 = out["actions"][0]
+        self.assertEqual(p3["action"], "spawn")
+        self.assertTrue(Path(p3["result_path"]).is_absolute())
+
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        self.repo.push("feature")
+        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
+                                               pr_url="https://example/pr/1"))
+        self.assertEqual([c["kind"] for c in out["checkpoints"]], ["pr_opened"])
+        self.assertEqual(out["actions"][0]["phase"], "P4")
+        self.assertIn("Active runs: M1-P4-1 (P4, not confirmed started)", self.cli("status"))
+
+    def test_unpushed_head_and_internal_codes_are_rejected(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        self.repo.push("feature")
+        head = self.repo.commit("feature.py", "x = 1\n", "implement SPEC-3")
+        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
+                                               pr_url="https://example/pr/1"))
+        problems = out["checkpoints"][0]["problems"]
+        self.assertTrue(any("not the reported" in p for p in problems), problems)
+        self.assertTrue(any("SPEC-3" in p for p in problems), problems)
+        self.assertEqual(out["actions"][0]["action"], "halted")
+
+    def blocked_p3(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        p3 = self.cli("handoff", "--kind", "implementation",
+                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
+        self.cli("event", "started", "--run-id", p3["run_id"])
+        head = self.repo.commit("feature.py", "x = 1\n", "feature")
+        self.repo.push("feature")
+        out = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="blocked", head=head,
+                                               summary="pushed; gh is not authenticated, no PR"))
+        self.assertEqual(out["actions"][0]["action"], "halted")
+        return p3["run_id"], head
+
+    def test_umbrella_completes_a_blocked_run_and_review_starts(self):
+        run_id, head = self.blocked_p3()
+        out = self.cli("event", "complete", "--run-id", run_id, "--head", head,
+                       "--pr-url", "https://example/pr/1", "--note", "user opened the PR")
+        self.assertIn("pr_opened", [c["kind"] for c in out["checkpoints"]])
+        self.assertEqual((out["actions"][0]["action"], out["actions"][0]["phase"]), ("spawn", "P4"))
+        self.assertEqual(af.read_events(self.mdir)[-2]["push"], {"class": "initial"})
+
+    def test_complete_refuses_a_head_that_is_not_on_the_remote(self):
+        run_id, _ = self.blocked_p3()
+        local = self.repo.commit("feature.py", "x = 2\n", "not pushed")
+        self.cli("event", "complete", "--run-id", run_id, "--head", local,
+                 "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
+        self.cli("event", "complete", "--run-id", run_id, "--head", local, "--pr-url", "https://example/pr/1",
+                 "--note", "x", "--override", "user pushes it next")
+
     def test_local_target_ahead_of_origin_halts_before_implementation(self):
-        git(self.repo.work, "checkout", "-q", "main")
+        self.repo.checkout("main")
         self.repo.commit("local.py", "z = 1\n", "unpushed on the target")
-        git(self.repo.work, "checkout", "-q", "feature")
+        self.repo.checkout("feature")
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
         out = self.cli("handoff", "--kind", "implementation", str(self.mdir / "implementation-handoff.md"))
         held = [c for c in out["checkpoints"] if c["kind"] == "target_unpushed"]
@@ -853,7 +1104,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(p3["action"], "spawn")
         self.assertEqual(p3["inputs"]["delivery_authorization"]["response"], "Yes")
         head = self.repo.commit("feature.py", "x = 1\n", "feature")
-        git(self.repo.work, "push", "-q", "origin", "feature")
+        self.repo.push("feature")
         p4 = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
                                               pr_url="https://example/pr/1"))["actions"][0]
         self.assertNotIn("delivery_authorization", p4["inputs"])
@@ -874,7 +1125,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(wait["action"], "wait")
         self.assertIn("no --run-id", wait["reason"])
         head = self.repo.commit("feature.py", "x = 1\n", "feature")
-        git(self.repo.work, "push", "-q", "origin", "feature")
+        self.repo.push("feature")
         out = self.cli("event", "complete", "--head", head, "--pr-url", "https://example/pr/1",
                        "--note", "user pushed and opened the PR")
         self.assertIn("pr_opened", [c["kind"] for c in out["checkpoints"]])
@@ -886,16 +1137,6 @@ class CliTests(unittest.TestCase):
         self.declined_delivery()
         head = self.repo.commit("feature.py", "x = 1\n", "feature")
         self.cli("event", "complete", "--head", head, "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
-
-    def test_invalid_verification_frontmatter_never_records_a_handoff(self):
-        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
-        path = self.mdir / "verification-handoff.md"
-        before = (self.mdir / "run.jsonl").read_bytes()
-        for text in ("# Missing frontmatter", "---\nauto_agnet: [A]\n---\n",
-                     "---\nauto_agent: [A]\nmanual_agent: [A]\nmanual_user: []\n---\n"):
-            path.write_text(text, encoding="utf-8")
-            self.cli("handoff", "--kind", "verification", str(path), expect=2)
-            self.assertEqual((self.mdir / "run.jsonl").read_bytes(), before)
 
     def test_new_categories_route_through_cli_with_explicit_manual_trigger(self):
         old_id, head = self.to_p5()
@@ -924,7 +1165,7 @@ class CliTests(unittest.TestCase):
         p3 = self.cli("handoff", "--kind", "implementation",
                       str(self.mdir / "implementation-handoff.md"))["actions"][0]
         head = self.repo.commit("feature.py", "x = 1\n", "feature")
-        git(self.repo.work, "push", "-q", "origin", "feature")
+        self.repo.push("feature")
         p4 = self.cli("result", self.result_file(p3["run_id"], phase="P3", status="completed", head=head,
                                               pr_url="https://example/pr/1"))["actions"][0]
         (self.mdir / "review.md").write_text("ok\n", encoding="utf-8")
@@ -947,9 +1188,9 @@ class CliTests(unittest.TestCase):
         run_id, head = self.to_p5()
         unpushed = self.repo.commit("test_feature.py", "assert False\n", "failing test")
         cases.append(("unpushed", unpushed, "not the reported"))
-        git(self.repo.work, "checkout", "-q", "-b", "other", "main")
+        self.repo.branch("other", "main")
         stray = self.repo.commit("other.py", "y = 1\n", "unrelated")
-        git(self.repo.work, "push", "-q", "-f", "origin", "other:feature")
+        self.repo.push("feature", src="other", force=True)
         cases.append(("non-descendant", stray, "does not descend"))
         for name, pushed, expected in cases:
             out = self.failing_p5(run_id, head, pushed)
@@ -989,7 +1230,7 @@ class CliTests(unittest.TestCase):
     def test_blocked_p5_with_a_push_but_no_head_is_rejected_not_crashed(self):
         run_id, head = self.to_p5()
         pushed = self.repo.commit("test_feature.py", "assert True\n", "test")
-        git(self.repo.work, "push", "-q", "origin", "feature")
+        self.repo.push("feature")
         out = self.cli("result", self.result_file(run_id, phase="P5", status="blocked", pushed_head=pushed,
                                                summary="pushed tests; staging is down"))
         problems = out["checkpoints"][0]["problems"]
@@ -1002,23 +1243,9 @@ class CliTests(unittest.TestCase):
     def test_failing_p5_push_with_internal_codes_is_rejected(self):
         run_id, head = self.to_p5()
         pushed = self.repo.commit("test_feature.py", "assert False\n", "test for SPEC-3")
-        git(self.repo.work, "push", "-q", "origin", "feature")
+        self.repo.push("feature")
         problems = self.failing_p5(run_id, head, pushed)["checkpoints"][0]["problems"]
         self.assertTrue(any("SPEC-3" in p for p in problems), problems)
-
-    def test_runs_report_lists_agent_ids_and_windows(self):
-        self.cli("init", "--milestone", "M1", "--ticket", "T-1", "--umbrella-session", "u1")
-        p3 = self.cli("handoff", "--kind", "implementation",
-                      str(self.mdir / "implementation-handoff.md"))["actions"][0]
-        self.cli("event", "started", "--run-id", p3["run_id"], "--agent", "agent-abc")
-        self.cli("event", "umbrella", "--session", "u2")
-        report = self.cli("runs")
-        run = report["runs"][p3["run_id"]]
-        self.assertEqual((run["phase"], run["agent"], run["ended"]), ("P3", "agent-abc", None))
-        self.assertTrue(run["dispatched"] and run["started"])
-        self.assertEqual([u["session"] for u in report["umbrella"]], ["u1", "u2"])
-        self.assertEqual(report["umbrella"][0]["to"], report["umbrella"][1]["from"])
-        self.assertEqual(report["runs_without_agent_id"], [])
 
 
 class CodexSessionTests(unittest.TestCase):

@@ -52,6 +52,28 @@ class StateCliTests(unittest.TestCase):
         self.assertEqual(self.state()["status"], {"phase": "P3", "status": "implementing"})
         self.assertEqual(rev, 3)
 
+    def test_superseded_values_go_to_their_own_structured_log(self):
+        first = self.cli("supersede", "diagnosis-M1", "--section", "Open decisions/1", "--kind", "changed",
+                         "--was", "reproduction (a): D1 runs it red", "--now", "reproduction (b): P3 shows it red",
+                         "--reason", "the regression test is P3's", "--source", "user: P3 shows it red",
+                         "--phase", "D1", "--milestone", "M1")
+        self.cli("supersede", "diagnosis-M1", "--section", "Root cause/4", "--kind", "stale",
+                 "--was", "one item re-enqueued per pass", "--reason", "fix run left 5 items", "--milestone", "M1")
+        self.cli("supersede", "specs-M2", "--section", "SPEC-3", "--kind", "rejected", "--was", "cache the lookup",
+                 "--reason", "keys don't repeat", "--milestone", "M2")
+        self.assertEqual((first["id"], first["kind"], first["now"]), ("S1", "changed", "reproduction (b): P3 shows it red"))
+        lines = (self.dir / "superseded.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([json.loads(line)["id"] for line in lines], ["S1", "S2", "S3"])
+        self.assertNotIn("superseded", self.state())
+        self.assertEqual([e["id"] for e in self.cli("superseded", "--milestone", "M1")], ["S1", "S2"])
+        self.assertEqual([e["id"] for e in self.cli("superseded", "--kind", "rejected")], ["S3"])
+
+    def test_a_changed_value_needs_what_replaced_it(self):
+        self.cli("supersede", "kickoff", "--section", "Scope", "--kind", "changed", "--was", "x", "--reason", "y",
+                 expect=2)
+        self.cli("supersede", "kickoff", "--section", "Scope", "--kind", "stale", "--reason", "y", expect=2)
+        self.assertFalse((self.dir / "superseded.jsonl").exists())
+
     def test_upsert_merges_one_row_and_json_values_parse(self):
         self.cli("upsert", "artifacts", "specs-M1", "path=milestones/M1/specs.md", "sha256=abc")
         self.cli("upsert", "artifacts", "specs-M1", "decision=written", 'affects:=["handoff"]')

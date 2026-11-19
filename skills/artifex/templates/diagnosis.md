@@ -2,6 +2,7 @@
 auto_agent: <[VER ids] P5 runs after P4 passes; always includes VER-001>
 manual_agent: <[VER ids] for a user-triggered, fully agent-executed run, or []>
 manual_user: <[VER ids] requiring user interactions, or []>
+p3_evidence: <[VER-001] when every REP is a regression test the fix adds, so P3's red and green runs settle it and P5 skips it; otherwise []>
 ---
 # Diagnosis — <bug>
 
@@ -36,7 +37,7 @@ This section is the bug's verification contract and verification handoff, shaped
 
 | Code | Type | Run | Reproductions covered | What to check | Evidence to collect | Pass condition |
 |---|---|---|---|---|---|---|
-| VER-001 | Reproduction verification | auto_agent | All REP rows | Every reproduction fails before the change and passes on the PR head; sibling symptoms the diagnosis lists, too | P3's recorded red run per REP; a run on the PR head (or the CI result for that exact head) | Each REP red before the change and green on the PR head. A REP with no red run, or not green on the head, fails this scenario |
+| VER-001 | Reproduction verification | auto_agent | All REP rows | Every reproduction fails before the change and passes on the PR head; sibling symptoms the diagnosis lists, too | P3's recorded red run per REP; P3's green run on the head P4 reviews when VER-001 is in `p3_evidence`, otherwise a P5 run on the PR head (or the CI result for that exact head) | Each REP red before the change and green on the PR head. A REP with no red run, or not green on the head, fails this scenario |
 | VER-002 | Full PR review (optional) | auto_agent | All REP rows | Review the whole PR with the PR reviewer: the change addresses the named root cause and stays within the fix approach | The review file | No blocks-merge findings. Include only if the user approves it. Runs once: skipped on reruns after rework |
 | VER-003 | <environment / data / benchmark / user interaction / other> | <auto_agent / manual_agent / manual_user> | <REP ids> | | | |
 

@@ -68,7 +68,7 @@ ORIGINS = {"initial", "p4", "p5", "ci", "threads", "resume"}
 ORIGIN_LABELS = {"initial": "", "p4": "review rework", "p5": "P5 rework", "ci": "CI fix",
                  "threads": "PR feedback", "resume": "resumed"}
 HANDOFF_FIELDS = {"implementation": ("branch", "workdir", "target"), "verification": ()}
-LIST_FIELDS = ("depends_on", "auto", "manual", "auto_agent", "manual_agent", "manual_user")
+LIST_FIELDS = ("depends_on", "auto", "manual", "auto_agent", "manual_agent", "manual_user", "p3_evidence")
 PLACEHOLDERS = {"", "tbd", "todo", "pending", "unknown", "?"}
 CI_OUTCOMES = ("passing", "failing", "pending", "none")
 SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -202,7 +202,7 @@ def validate_verification_fields(fields: dict) -> None:
     missing = [k for k in required if k not in fields]
     if missing:
         raise FlowError("verification handoff frontmatter lacks " + ", ".join(missing))
-    for key in (*categories, "auto", "manual"):
+    for key in (*categories, "auto", "manual", "p3_evidence"):
         if key not in fields:
             continue
         values = fields[key]
@@ -211,11 +211,18 @@ def validate_verification_fields(fields: dict) -> None:
     ids = [sid for group in scenario_groups(fields).values() for sid in group]
     if len(ids) != len(set(ids)):
         raise FlowError("each verification scenario must belong to exactly one run category")
+    outside = sorted(set(fields.get("p3_evidence", [])) - set(scenario_groups(fields)["auto_agent"]))
+    if outside:
+        raise FlowError("p3_evidence may only name auto_agent scenarios: " + ", ".join(outside))
 
 
 def phase_scenarios(fields: dict, phase: str) -> list:
+    """P5 runs only the auto scenarios that P3's own red and green runs don't already settle."""
     groups = scenario_groups(fields)
-    return groups["auto_agent"] if phase == "P5" else groups["manual_agent"] + groups["manual_user"]
+    if phase == "P5":
+        settled_by_p3 = set(fields.get("p3_evidence", []))
+        return [sid for sid in groups["auto_agent"] if sid not in settled_by_p3]
+    return groups["manual_agent"] + groups["manual_user"]
 
 
 def after_review(state: dict, from_pass: bool) -> list:
@@ -232,8 +239,10 @@ def after_review(state: dict, from_pass: bool) -> list:
         return []
     if phase_scenarios(fields, "P6"):
         return [checkpoint("p6_applies", "No auto scenarios; P6 manual verification applies on the user's trigger")]
-    return [checkpoint("ready_for_acceptance",
-                       "Review passed and the contract has no scenarios to run; needs the user's sign-off")]
+    message = ("Review passed and P3's red and green runs settle every auto scenario; needs the user's sign-off"
+               if fields.get("p3_evidence")
+               else "Review passed and the contract has no scenarios to run; needs the user's sign-off")
+    return [checkpoint("ready_for_acceptance", message)]
 
 
 def on_init(state, ev):
@@ -939,6 +948,38 @@ class Git:
     def paths(self, commit) -> list:
         return self.out("diff-tree", "--no-commit-id", "--name-only", "-r", commit).splitlines()
 
+    def fetch(self, *refs, check=True):
+        self.run("fetch", "--quiet", "origin", *refs, check=check)
+
+    def rev_parse(self, ref, verify=False) -> str:
+        """The SHA ref names; with verify, "" for a ref that doesn't exist instead of an error."""
+        if verify:
+            return self.run("rev-parse", "--verify", "--quiet", ref, check=False).stdout.strip()
+        return self.out("rev-parse", ref)
+
+    def merge_base(self, a, b) -> str:
+        return self.out("merge-base", a, b)
+
+    def merges_between(self, old, new) -> list:
+        return self.out("rev-list", "--merges", f"{old}..{new}").split()
+
+    def remerge_diff(self, merge) -> str:
+        """Empty for a clean merge; the conflict resolution otherwise."""
+        return self.out("show", "--remerge-diff", "--no-color", "--format=", merge)
+
+    def own_commits(self, old, new, target_ref) -> list:
+        """Non-merge commits in old..new that target_ref doesn't already have."""
+        return self.out("rev-list", "--no-merges", f"{old}..{new}", "--not", target_ref).split()
+
+    def count_between(self, base, tip) -> int:
+        return int(self.out("rev-list", "--count", f"{base}..{tip}"))
+
+    def messages(self, base, tip) -> str:
+        return self.out("log", "--format=%B", f"{base}..{tip}")
+
+    def diff(self, base, tip) -> str:
+        return self.out("diff", "--no-color", "-U0", base, tip)
+
 
 def is_doc(path: str, patterns) -> bool:
     return any(fnmatch.fnmatch(path, p) for p in patterns)
@@ -951,21 +992,21 @@ def classify_push(git: Git, old: str, new: str, target_ref: str, doc_patterns) -
     if old == new:
         return dict(push, **{"class": "none"})
     if git.is_ancestor(old, new):
-        merges = git.out("rev-list", "--merges", f"{old}..{new}").split()
+        merges = git.merges_between(old, new)
         for merge in merges:
             # A remerge diff is empty for a clean merge and shows the
             # conflict resolution otherwise, which is new code.
-            if git.out("show", "--remerge-diff", "--no-color", "--format=", merge):
+            if git.remerge_diff(merge):
                 return dict(push, **{"class": "code", "reason": f"conflict resolution in {merge[:12]}"})
-        own = git.out("rev-list", "--no-merges", f"{old}..{new}", "--not", target_ref).split()
+        own = git.own_commits(old, new, target_ref)
         if not own:
             return dict(push, **{"class": "merge" if merges else "none"})
         paths = sorted({p for commit in own for p in git.paths(commit)})
         if paths and all(is_doc(p, doc_patterns) for p in paths):
             return dict(push, **{"class": "docs", "paths": paths})
         return dict(push, **{"class": "code", "paths": paths})
-    old_base = git.out("merge-base", old, target_ref)
-    new_base = git.out("merge-base", new, target_ref)
+    old_base = git.merge_base(old, target_ref)
+    new_base = git.merge_base(new, target_ref)
     if git.patch_ids(old_base, old) == git.patch_ids(new_base, new):
         return dict(push, **{"class": "rebase"})
     return dict(push, **{"class": "code", "reason": "history rewritten with changed patches"})
@@ -978,20 +1019,20 @@ def target_ahead(fields: dict):
         return None
     git = Git(workdir)
     try:
-        git.run("fetch", "--quiet", "origin", target, check=False)
-        local = git.run("rev-parse", "--verify", "--quiet", f"refs/heads/{target}", check=False).stdout.strip()
-        remote = git.run("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{target}", check=False).stdout.strip()
+        git.fetch(target, check=False)
+        local = git.rev_parse(f"refs/heads/{target}", verify=True)
+        remote = git.rev_parse(f"refs/remotes/origin/{target}", verify=True)
         if not local or not remote:
             return None
-        count = int(git.out("rev-list", "--count", f"{remote}..{local}"))
+        count = git.count_between(remote, local)
     except (GitError, ValueError, OSError):
         return None
     return {"commits": count, "local": local, "origin": remote} if count else None
 
 
 def internal_code_hits(git: Git, base: str, tip: str, patterns) -> list:
-    messages = git.out("log", "--format=%B", f"{base}..{tip}")
-    diff = git.out("diff", "--no-color", "-U0", base, tip)
+    messages = git.messages(base, tip)
+    diff = git.diff(base, tip)
     added = "\n".join(line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++"))
     hits = set()
     for pattern in patterns:
@@ -1076,17 +1117,17 @@ def check_git(state: dict, run: dict, env: dict) -> tuple[list, dict | None]:
     if not tip:
         return [], None
     try:
-        git.run("fetch", "--quiet", "origin", branch, fields["target"])
+        git.fetch(branch, fields["target"])
         if not git.commit_exists(tip):
             return [f"commit {tip[:12]} not found in {fields['workdir']}"], None
         problems = []
-        remote = git.out("rev-parse", f"origin/{branch}")
+        remote = git.rev_parse(f"origin/{branch}")
         if remote != tip:
             problems.append(f"origin/{branch} is at {remote[:12]}, not the reported {tip[:12]}")
         prev = state["pr"]["head"] if phase == "P3" else env["head"]
         if phase != "P3" and not git.is_ancestor(env["head"], tip):
             problems.append("pushed_head does not descend from the head under test")
-        base = prev if prev and git.is_ancestor(prev, tip) else git.out("merge-base", target_ref, tip)
+        base = prev if prev and git.is_ancestor(prev, tip) else git.merge_base(target_ref, tip)
         hits = internal_code_hits(git, base, tip, state["code_patterns"])
         if hits:
             problems.append(f"internal codes in commits or added lines: {', '.join(hits)}")
