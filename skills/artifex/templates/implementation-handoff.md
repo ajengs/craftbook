@@ -29,7 +29,7 @@ Known tradeoffs and limitations: <path to `tradeoffs.md`>. Don't build around an
 Every choice that would change the code's shape if reopened: test approach, test data format and size, file layout, how the work splits into PRs. Don't build an alternative to a settled decision; ask through the umbrella.
 
 ## Implementation rules
-- Don't run a failing test before the change.
+- Don't run a failing test before the change. A bug's handoff (from D1) is the exception: write the regression test first and run it before the change. It must fail on the reported symptom. Then make the change and run it green, and put both runs in the result file. If it passes before the change, stop and report through the umbrella.
 - First add any missing tests that preserve or guard existing behavior. Make sure they pass. Commit.
 - Then make the change in a separate commit containing the proposed changes and their tests.
 - Write no comments. If context is absolutely necessary, add the why in at most 3 lines.
