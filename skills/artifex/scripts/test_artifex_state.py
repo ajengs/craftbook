@@ -6,14 +6,23 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import artifex_flow as af  # noqa: E402
 import artifex_state as st  # noqa: E402
+
+
+def setUpModule():
+    environment = patch.dict(os.environ)
+    environment.start()
+    unittest.addModuleCleanup(environment.stop)
+    os.environ.pop("ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL", None)
 
 
 class StateCliTests(unittest.TestCase):
@@ -260,6 +269,25 @@ class ModeTests(unittest.TestCase):
     CONTRACT = "# Verification contract — M1\n\nbody\n"
     HANDOFF = "---\nbranch: feat/x\nworkdir: D:/w\ntarget: main\n---\n# Implementation handoff\n"
     VERIFICATION = "---\nauto:\n  - V1\nmanual: []\n---\n# Verification handoff\n"
+
+    def test_new_verification_categories_are_recognised(self):
+        path = self.write("verification-handoff.md",
+                          "---\nauto_agent: [A]\nmanual_agent: [M]\nmanual_user: [U]\n---\n")
+        self.assertEqual(st.recognise(str(path)), ("verification_handoff", None))
+
+    def test_partial_or_duplicate_categories_report_a_problem(self):
+        for text in ("---\nmanual_agent: [M]\n---\n",
+                     "---\nauto_agent: [A]\nmanual_agent: [A]\nmanual_user: []\n---\n"):
+            path = self.write("verification-handoff.md", text)
+            kind, problem = st.recognise(str(path))
+            self.assertIsNone(kind)
+            self.assertIsNotNone(problem)
+
+    def test_named_verification_handoff_cannot_bypass_category_validation(self):
+        path = self.write("named.md", "---\nmanual_user: [U]\n---\n")
+        claims, others, problems = st.classify_files([str(path)], {"verification_handoff": str(path)})
+        self.assertTrue(problems)
+        self.assertEqual(claims["verification_handoff"], [])
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

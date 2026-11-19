@@ -7,3 +7,7 @@ Produce **decision-useful evidence**, not a wall of annotation.
 - Verification reports map contract scenario IDs to actual outcomes (`pass`, `fail`, `not run`, `invalid`), show the relevant raw evidence location, and separate raw observations from calculations.
 - A failed or inconclusive run cannot become a pass through narrative. State environment, limitations and confounders when material.
 - Keep reports concise: **verdict first**, then findings/evidence, limitations and next action. Do not hide incomplete work as a clean handoff.
+
+## Verification run inventory
+
+For each run, report the planned and actual tools/skills (with references), why they were used, readiness evidence and date, required/optional artifacts and their purposes, collected paths or query links, and missing evidence with its consequence. Use the statuses in `references/verification-tools.md`. Record environment, head, scenario IDs, timestamps/timezone and capture settings so recordings, dashboard views and snapshots can be correlated. A link must preserve the instance, query and time range; a dashboard home page is not evidence of a measurement. Manual user results identify what the user actually did or reported and what the agent independently observed.

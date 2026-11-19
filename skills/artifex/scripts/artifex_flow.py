@@ -68,7 +68,7 @@ ORIGINS = {"initial", "p4", "p5", "ci", "threads", "resume"}
 ORIGIN_LABELS = {"initial": "", "p4": "review rework", "p5": "P5 rework", "ci": "CI fix",
                  "threads": "PR feedback", "resume": "resumed"}
 HANDOFF_FIELDS = {"implementation": ("branch", "workdir", "target"), "verification": ()}
-LIST_FIELDS = ("depends_on", "auto", "manual")
+LIST_FIELDS = ("depends_on", "auto", "manual", "auto_agent", "manual_agent", "manual_user")
 PLACEHOLDERS = {"", "tbd", "todo", "pending", "unknown", "?"}
 CI_OUTCOMES = ("passing", "failing", "pending", "none")
 SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -180,6 +180,44 @@ def review_settled(state: dict) -> bool:
     return not state["review"]["open"] and is_current(state, state["review"]["passed_head"])
 
 
+def scenario_groups(fields: dict) -> dict:
+    """Adapt replayed fields without dropping historical phase assignments or validating old logs."""
+    return {
+        "auto_agent": list(fields.get("auto_agent") or fields.get("auto", [])),
+        "manual_agent": list(fields.get("manual_agent", [])),
+        "manual_user": list(fields.get("manual_user") or fields.get("manual", [])),
+    }
+
+
+def validate_verification_fields(fields: dict) -> None:
+    """Validate new handoff ingress without changing historical event replay."""
+    unknown = sorted(set(fields) - set(LIST_FIELDS))
+    if unknown:
+        raise FlowError("unknown verification handoff field(s): " + ", ".join(unknown))
+    categories = ("auto_agent", "manual_agent", "manual_user")
+    new_format = any(k in fields for k in categories)
+    if new_format and ({"auto", "manual"} & set(fields)):
+        raise FlowError("use either legacy auto/manual fields or all three new category fields; do not mix formats")
+    required = categories if new_format else ("auto", "manual")
+    missing = [k for k in required if k not in fields]
+    if missing:
+        raise FlowError("verification handoff frontmatter lacks " + ", ".join(missing))
+    for key in (*categories, "auto", "manual"):
+        if key not in fields:
+            continue
+        values = fields[key]
+        if not isinstance(values, list) or any(not isinstance(v, str) or is_placeholder(v) for v in values):
+            raise FlowError(f"{key} must be a list of concrete scenario IDs, or []")
+    ids = [sid for group in scenario_groups(fields).values() for sid in group]
+    if len(ids) != len(set(ids)):
+        raise FlowError("each verification scenario must belong to exactly one run category")
+
+
+def phase_scenarios(fields: dict, phase: str) -> list:
+    groups = scenario_groups(fields)
+    return groups["auto_agent"] if phase == "P5" else groups["manual_agent"] + groups["manual_user"]
+
+
 def after_review(state: dict, from_pass: bool) -> list:
     if not review_settled(state):
         return []
@@ -190,9 +228,9 @@ def after_review(state: dict, from_pass: bool) -> list:
                                "Review passed; P5 waits for the verification handoff", post=False)]
         return []
     fields = ver["fields"]
-    if fields.get("auto"):
+    if phase_scenarios(fields, "P5"):
         return []
-    if fields.get("manual"):
+    if phase_scenarios(fields, "P6"):
         return [checkpoint("p6_applies", "No auto scenarios; P6 manual verification applies on the user's trigger")]
     return [checkpoint("ready_for_acceptance",
                        "Review passed and the contract has no scenarios to run; needs the user's sign-off")]
@@ -243,6 +281,8 @@ def on_handoff(state, ev):
                               "ask the user, then record `event context`", open=left))
     if kind == "verification" and previous is not None and previous["sha256"] != ev["sha256"]:
         # The passes ran against the old contract: new or changed scenarios must run before acceptance.
+        state["p6"]["triggered"] = False
+        state["requests"].pop("P6", None)
         reset = [p for p in ("p5", "p6") if state[p]["passed_head"]]
         for p in reset:
             state[p]["passed_head"] = None
@@ -278,7 +318,8 @@ def on_dispatched(state, ev):
         state["active"][ev["run_id"]].update(
             verification_sha=ver["sha256"],
             # The run answers the scenarios it was given, even if the handoff changes while it runs.
-            scenarios=list(ver["fields"].get("auto" if phase == "P5" else "manual", [])))
+            scenarios=list(phase_scenarios(ver["fields"], phase)),
+            scenario_groups=scenario_groups(ver["fields"]))
     state["seq"][phase] = state["seq"].get(phase, 0) + 1
     state["handled_threads"].extend(t for t in req["threads"] if t not in state["handled_threads"])
     if phase == "P4":
@@ -364,6 +405,9 @@ def on_run_failed(state, ev):
     if phase == "P4":
         state["review"]["rounds"] -= 1
         state["review"]["total"] -= 1
+    if phase in ("P5", "P6") and _obsolete(state, run):
+        return [checkpoint("obsolete_run_failed", f"{run_id} ended against an older verification handoff; "
+                           "P5 uses the current one and P6 needs a new user trigger", post=False)]
     if phase == "P6":
         state["p6"]["triggered"] = True
     state["handled_threads"] = [t for t in state["handled_threads"] if t not in run["threads"]]
@@ -517,7 +561,7 @@ def p5_result(state, run, env, ev):
             p5["passed_head"] = env["head"]
             return [checkpoint("p5_stale", "P5 passed on an older head; it reruns after review", post=False)]
         p5["passed_head"] = state["pr"]["head"]
-        if state["handoffs"]["verification"]["fields"].get("manual"):
+        if phase_scenarios(state["handoffs"]["verification"]["fields"], "P6"):
             return [checkpoint("p5_passed", "P5 passed; P6 manual verification applies on the user's trigger",
                                artifacts=artifacts)]
         return [checkpoint("ready_for_acceptance", "P5 passed; ready for acceptance, needs the user's sign-off",
@@ -543,7 +587,7 @@ def p5_result(state, run, env, ev):
 
 def p6_result(state, run, env, ev):
     if env["status"] in ("completed", "changes_requested") and _obsolete(state, run):
-        # P6 is the user's manual check: they trigger it again on the new contract.
+        # P6 requires a fresh user trigger after its controlling contract changes.
         return _obsolete_result(state, run, env)
     if env["status"] == "completed" and is_current(state, env["head"]):
         _verification_tests_pushed(state, env)
@@ -612,7 +656,7 @@ def on_dependency_met(state, ev):
 
 def on_trigger_p6(state, ev):
     ver = state["handoffs"].get("verification")
-    if ver is None or not ver["fields"].get("manual"):
+    if ver is None or not phase_scenarios(ver["fields"], "P6"):
         raise FlowError("the verification handoff has no manual scenarios")
     state["p6"]["triggered"] = True
     return [checkpoint("p6_triggered", "P6 requested by the user", post=False)]
@@ -659,6 +703,8 @@ def _ref(handoff) -> str:
 
 def spawn_action(state: dict, phase: str, run_id: str | None = None, run: dict | None = None) -> dict:
     """A new spawn or, given an unconfirmed run, the same spawn printed again."""
+    if run is not None and phase in ("P5", "P6") and _obsolete(state, run):
+        raise FlowError(f"{run_id} has an obsolete verification handoff; reconcile the unconfirmed run first")
     if run_id is None:
         run_id = f"{state['milestone']}-{phase}-{state['seq'].get(phase, 0) + 1}"
     req = run or state["requests"].get(phase, {"origins": [], "inputs": [], "threads": []})
@@ -695,7 +741,12 @@ def spawn_action(state: dict, phase: str, run_id: str | None = None, run: dict |
             extra.append(review["mode"].replace("_", " "))
     if phase in ("P5", "P6"):
         inputs["scenarios"] = (run.get("scenarios") if run is not None and "scenarios" in run
-                               else ver["fields"].get("auto" if phase == "P5" else "manual", []))
+                               else phase_scenarios(ver["fields"], phase))
+        groups = (run.get("scenario_groups") if run is not None else None)
+        groups = groups or scenario_groups(ver["fields"])
+        categories = ("auto_agent",) if phase == "P5" else ("manual_agent", "manual_user")
+        inputs["scenario_groups"] = {k: [sid for sid in ids if sid in inputs["scenarios"]] if k in categories else []
+                                     for k, ids in groups.items()}
         action["evidence_dir"] = f"evidence/{run_id}"
     if run is not None:
         action["unconfirmed"] = (f"printed at {run.get('dispatched_at') or 'an earlier call'} with no "
@@ -784,8 +835,19 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
         return [{"action": "halted", "reasons": state["halt"]}]
     if "implementation" not in state["handoffs"]:
         return [_wait(None, "no implementation handoff recorded")]
-    actions = [spawn_action(state, run["phase"], run_id, run)
-               for run_id, run in state["active"].items() if not run.get("started")]
+    actions = []
+    for run_id, run in state["active"].items():
+        if run.get("started"):
+            continue
+        phase = run["phase"]
+        reason = None
+        if phase in ("P5", "P6"):
+            if _obsolete(state, run):
+                reason = (f"{run_id} has an obsolete verification handoff; confirm whether it is running, "
+                          "then record started or run-failed; do not launch it with the new handoff")
+            else:
+                reason = _changed(state, ["implementation", "verification"], hash_of)
+        actions.append(_wait(phase, reason) if reason else spawn_action(state, phase, run_id, run))
     active_phases = {run["phase"] for run in state["active"].values()}
     ver = state["handoffs"].get("verification")
 
@@ -800,7 +862,7 @@ def next_actions(state: dict, siblings=(), hash_of=None, delivery=None) -> list:
         actions.append(_wait("P4", reason) if reason else spawn_action(state, "P4"))
 
     settled = review_settled(state) and "P4" not in state["requests"]
-    auto = bool(ver and ver["fields"].get("auto"))
+    auto = bool(ver and phase_scenarios(ver["fields"], "P5"))
     if settled and auto and not is_current(state, state["p5"]["passed_head"]) and "P5" not in active_phases:
         reason = _verification_blocker(state, active_phases, siblings) \
             or _changed(state, ["implementation", "verification"], hash_of)
@@ -834,7 +896,7 @@ def idle_reason(state: dict) -> str:
     ver = state["handoffs"].get("verification")
     if ver is None:
         reason = "review passed; waiting for the verification handoff"
-    elif ver["fields"].get("manual") and not is_current(state, state["p6"]["passed_head"]):
+    elif phase_scenarios(ver["fields"], "P6") and not is_current(state, state["p6"]["passed_head"]):
         reason = "P5 is done or not applicable; waiting for the user's P6 trigger (event trigger-p6)"
     else:
         reason = "ready for acceptance; waiting for the user's sign-off (event close)"
@@ -982,7 +1044,7 @@ def _check_scenarios(state, run, status, env) -> list:
     phase = run["phase"]
     expected = run.get("scenarios")
     if expected is None:
-        expected = state["handoffs"]["verification"]["fields"].get("auto" if phase == "P5" else "manual", [])
+        expected = phase_scenarios(state["handoffs"]["verification"]["fields"], phase)
     scenarios = env.get("scenarios")
     if not isinstance(scenarios, dict):
         return ["scenarios must map each scenario id to pass, fail, inconclusive or invalid"]
@@ -1069,6 +1131,24 @@ def _unquote(value: str) -> str:
     return value
 
 
+def _without_yaml_comment(value: str) -> str:
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote == '"':
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'" and (index == 0 or value[index - 1] in " [,:\t"):
+            quote = char
+        elif char == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+    return value
+
+
 def parse_frontmatter(text: str) -> dict:
     """Flat `key: value` and `key: [a, b]` or `- item` lists; enough for handoffs."""
     lines = text.lstrip("﻿").splitlines()
@@ -1078,6 +1158,7 @@ def parse_frontmatter(text: str) -> dict:
     for line in lines[1:]:
         if line.strip() == "---":
             break
+        line = _without_yaml_comment(line)
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -1190,7 +1271,7 @@ class Session:
         self.state = fold(self.events)
         self.checkpoints = []
 
-    def record(self, ev: dict) -> list:
+    def record(self, ev: dict, suppress_notifications: bool = False) -> list:
         stamped = {"seq": len(self.events) + 1, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), **ev}
         trial = copy.deepcopy(self.state)
         cps = apply(trial, stamped)
@@ -1200,6 +1281,11 @@ class Session:
         self.events.append(stamped)
         self.state = trial
         self.checkpoints.extend(cps)
+        try:
+            from artifex_notify import notify_committed
+            notify_committed(self, stamped, cps, suppress=suppress_notifications)
+        except Exception:
+            print("artifex notification skipped: adapter unavailable", file=sys.stderr)
         return cps
 
     def initiative(self):
@@ -1258,7 +1344,7 @@ def cmd_init(args):
     (args.dir / "results").mkdir(parents=True, exist_ok=True)
     session.record({"type": "init", "milestone": args.milestone, "ticket": args.ticket,
                     "code_patterns": args.code_pattern, "doc_patterns": args.doc_pattern,
-                    "umbrella_session": args.umbrella_session})
+                    "umbrella_session": args.umbrella_session}, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
@@ -1270,6 +1356,8 @@ def cmd_handoff(args):
     if not path.exists():
         raise FlowError(f"{path} not found")
     fields = parse_frontmatter(path.read_text(encoding="utf-8"))
+    if args.kind == "verification":
+        validate_verification_fields(fields)
     if args.kind == "implementation" and not fields:
         raise FlowError(f"{path.name} has no frontmatter; use the template's, with TBD for anything not settled")
     for name in HANDOFF_FIELDS[args.kind]:
@@ -1279,7 +1367,7 @@ def cmd_handoff(args):
     first = args.kind == "implementation" and "implementation" not in session.state["handoffs"]
     if first:
         ev["target_ahead"] = target_ahead(fields)
-    session.record(ev)
+    session.record(ev, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
@@ -1302,7 +1390,7 @@ def cmd_result(args):
         git_problems, push = check_git(session.state, run, env)
         problems += git_problems
     session.record({"type": "result", "result": env, "problems": problems, "override": args.override,
-                    "push": push})
+                    "push": push}, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run, host=args.host)
 
 
@@ -1339,7 +1427,7 @@ def cmd_event(args):
         ev = complete_event(session, args)
     else:
         ev = {"type": "close", "note": args.note}
-    session.record(ev)
+    session.record(ev, suppress_notifications=args.dry_run)
     return session.respond(dispatch=not args.dry_run, host=args.host)
 
 

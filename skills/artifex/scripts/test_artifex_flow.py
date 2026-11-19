@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import artifex_flow as af  # noqa: E402
+
+
+def setUpModule():
+    environment = patch.dict(os.environ)
+    environment.start()
+    unittest.addModuleCleanup(environment.stop)
+    os.environ.pop("ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL", None)
 
 
 def sha(n: int) -> str:
@@ -879,6 +887,37 @@ class CliTests(unittest.TestCase):
         head = self.repo.commit("feature.py", "x = 1\n", "feature")
         self.cli("event", "complete", "--head", head, "--pr-url", "https://example/pr/1", "--note", "x", expect=2)
 
+    def test_invalid_verification_frontmatter_never_records_a_handoff(self):
+        self.cli("init", "--milestone", "M1", "--ticket", "T-1")
+        path = self.mdir / "verification-handoff.md"
+        before = (self.mdir / "run.jsonl").read_bytes()
+        for text in ("# Missing frontmatter", "---\nauto_agnet: [A]\n---\n",
+                     "---\nauto_agent: [A]\nmanual_agent: [A]\nmanual_user: []\n---\n"):
+            path.write_text(text, encoding="utf-8")
+            self.cli("handoff", "--kind", "verification", str(path), expect=2)
+            self.assertEqual((self.mdir / "run.jsonl").read_bytes(), before)
+
+    def test_new_categories_route_through_cli_with_explicit_manual_trigger(self):
+        old_id, head = self.to_p5()
+        path = self.mdir / "verification-handoff.md"
+        path.write_text("---\nauto_agent: [A] # automatic\nmanual_agent: [M]\nmanual_user: [U]\n---\n",
+                        encoding="utf-8")
+        held = self.cli("handoff", "--kind", "verification", str(path))
+        self.assertFalse(any(a["action"] == "spawn" for a in held["actions"]))
+        new = self.cli("event", "run-failed", "--run-id", old_id, "--reason", "confirmed not running")
+        p5, = [a for a in new["actions"] if a["action"] == "spawn"]
+        self.assertEqual(p5["inputs"]["scenarios"], ["A"])
+        self.assertEqual(p5["inputs"]["verification_handoff"],
+                         "verification-handoff.md@" + af.file_sha(path)[:12])
+        (self.mdir / "p5.md").write_text("pass\n", encoding="utf-8")
+        result = self.cli("result", self.result_file(p5["run_id"], phase="P5", status="completed", head=head,
+                                                   scenarios={"A": "pass"}, artifacts=["p5.md"]))
+        self.assertFalse(any(a["action"] == "spawn" for a in result["actions"]))
+        trigger = self.cli("event", "trigger-p6")
+        p6, = [a for a in trigger["actions"] if a["action"] == "spawn"]
+        self.assertEqual(p6["inputs"]["scenario_groups"],
+                         {"auto_agent": [], "manual_agent": ["M"], "manual_user": ["U"]})
+
     def to_p5(self):
         """Implementation, a passing review and a P5 spawn on the pushed feature head."""
         self.cli("init", "--milestone", "M1", "--ticket", "T-1")
@@ -1011,10 +1050,12 @@ class CodexSessionTests(unittest.TestCase):
     def start(self):
         return self.cli("handoff", "--kind", "implementation", str(self.impl))["actions"][0]
 
-    def exercise_phases(self, expected_action):
+    def exercise_phases(self, expected_action, three_categories=False):
         action = self.start()
         verification = self.mdir / "verification-handoff.md"
-        verification.write_text("---\nauto: [V1]\nmanual: [V2]\n---\n", encoding="utf-8")
+        fields = ("---\nauto_agent: [V1]\nmanual_agent: [V2]\nmanual_user: [V3]\n---\n"
+                  if three_categories else "---\nauto: [V1]\nmanual: [V2]\n---\n")
+        verification.write_text(fields, encoding="utf-8")
         self.cli("handoff", "--kind", "verification", str(verification))
         for phase in ("P3", "P4", "P5", "P6"):
             with self.subTest(phase=phase):
@@ -1041,10 +1082,19 @@ class CodexSessionTests(unittest.TestCase):
                 else:
                     env["artifacts"] = [report.name]
                 if phase in ("P5", "P6"):
-                    env["scenarios"] = {"V1" if phase == "P5" else "V2": "pass"}
+                    expected = ["V1"] if phase == "P5" else (["V2", "V3"] if three_categories else ["V2"])
+                    self.assertEqual(action["inputs"]["scenarios"], expected)
+                    if three_categories:
+                        self.assertEqual(action["inputs"]["scenario_groups"],
+                                         {"auto_agent": ["V1"] if phase == "P5" else [],
+                                          "manual_agent": ["V2"] if phase == "P6" else [],
+                                          "manual_user": ["V3"] if phase == "P6" else []})
+                    env["scenarios"] = {sid: "pass" for sid in expected}
                 path = self.result_file(action["run_id"], **env)
                 out = self.cli("result", path)
                 if phase == "P5":
+                    self.assertFalse(any(a["action"] in ("create_session", "manual_session", "spawn")
+                                         for a in out["actions"]))
                     out = self.cli("event", "trigger-p6")
                 if phase != "P6":
                     action = out["actions"][0]
@@ -1052,6 +1102,13 @@ class CodexSessionTests(unittest.TestCase):
 
     def test_every_codex_phase_uses_a_separate_session_and_verbatim_coordination(self):
         self.exercise_phases("create_session")
+
+    def test_three_categories_keep_codex_sessions_and_explicit_p6_trigger(self):
+        self.exercise_phases("create_session", three_categories=True)
+
+    def test_three_categories_keep_manual_session_relay_and_explicit_p6_trigger(self):
+        self.save_consent(dict(self.authorization, session_creation="declined"))
+        self.exercise_phases("manual_session", three_categories=True)
 
     def test_old_coordination_consent_does_not_grant_session_creation(self):
         for key in ("session_creation", "question", "response"):
@@ -1421,6 +1478,194 @@ class EvidenceDirTests(unittest.TestCase):
         sim.to_review_pass()
         p5, = sim.spawned()
         self.assertEqual(p5["evidence_dir"], f"evidence/{p5['run_id']}")
+
+
+class RunCategoryTests(unittest.TestCase):
+    def categorized(self, **groups):
+        sim = Sim(verification=False)
+        sim.apply({"type": "handoff", "kind": "verification", "path": "verification-handoff.md",
+                   "sha256": "v" * 64, "fields": groups})
+        return sim
+
+    def test_auto_starts_after_review_but_manual_categories_wait_for_trigger(self):
+        sim = self.categorized(auto_agent=["A"], manual_agent=["M"], manual_user=["U"])
+        sim.to_review_pass()
+        p5, = sim.spawned()
+        self.assertEqual(p5["inputs"]["scenarios"], ["A"])
+        self.assertEqual(p5["inputs"]["scenario_groups"]["auto_agent"], ["A"])
+        sim.result(p5["run_id"], head=sha(1), scenarios={"A": "pass"})
+        self.assertEqual(sim.spawned(), [])
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        self.assertEqual(p6["inputs"]["scenarios"], ["M", "U"])
+        self.assertEqual(p6["inputs"]["scenario_groups"],
+                         {"auto_agent": [], "manual_agent": ["M"], "manual_user": ["U"]})
+        run = sim.state["active"][p6["run_id"]]
+        self.assertTrue(af._check_scenarios(sim.state, run, "completed", {"scenarios": {"M": "pass"}}))
+        self.assertEqual(af._check_scenarios(sim.state, run, "completed",
+                                           {"scenarios": {"M": "pass", "U": "pass"}}), [])
+
+    def test_each_manual_category_alone_waits_for_explicit_trigger(self):
+        for category in ("manual_agent", "manual_user"):
+            with self.subTest(category=category):
+                sim = self.categorized(**{category: ["V"]})
+                sim.to_review_pass()
+                self.assertEqual(sim.spawned(), [])
+                sim.apply({"type": "trigger_p6"})
+                p6, = sim.spawned()
+                self.assertEqual(p6["inputs"]["scenario_groups"][category], ["V"])
+
+    def test_dispatch_preserves_categories_while_old_run_finishes(self):
+        sim = self.categorized(manual_agent=["M"], manual_user=["U"])
+        sim.to_review_pass()
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        run = sim.state["active"][p6["run_id"]]
+        sim.apply({"type": "handoff", "kind": "verification", "path": "verification-handoff.md",
+                   "sha256": "w" * 64, "fields": {"manual_user": ["M", "U"]}})
+        self.assertEqual(run["scenario_groups"]["manual_agent"], ["M"])
+        sim.result(p6["run_id"], head=sha(1), scenarios={"M": "pass", "U": "pass"})
+        self.assertIn("p6_obsolete", sim.kinds())
+        self.assertIsNone(sim.state["p6"]["passed_head"])
+
+    def test_duplicate_or_ambiguous_assignments_are_rejected(self):
+        for groups in ({"auto_agent": ["V"], "manual_user": ["V"]},
+                       {"manual_agent": ["V", "V"]},
+                       {"manual": ["L"], "manual_user": ["V"]},
+                       {"auto": ["L"], "auto_agent": ["V"]}):
+            with self.subTest(groups=groups), self.assertRaises(af.FlowError):
+                af.validate_verification_fields({"auto_agent": [], "manual_agent": [], "manual_user": [], **groups})
+
+    def test_frontmatter_and_legacy_categories(self):
+        fields = af.parse_frontmatter("---\nauto_agent: [A]\nmanual_agent: M\nmanual_user: [U]\n---\n")
+        self.assertEqual(af.phase_scenarios(fields, "P5"), ["A"])
+        self.assertEqual(af.phase_scenarios(fields, "P6"), ["M", "U"])
+        self.assertEqual(af.scenario_groups({"auto": ["A"], "manual": ["U"]}),
+                         {"auto_agent": ["A"], "manual_agent": [], "manual_user": ["U"]})
+
+
+class VerificationRoutingRegressionTests(unittest.TestCase):
+    def test_replacing_contract_revokes_pending_manual_trigger(self):
+        sim = Sim(auto=(), manual=("M",))
+        sim.apply({"type": "trigger_p6"})
+        sim.verification(auto=(), manual=("U",), sha256="w" * 64)
+        sim.to_review_pass()
+        self.assertEqual(sim.spawned(), [])
+        sim.apply({"type": "trigger_p6"})
+        self.assertEqual(sim.spawned()[0]["inputs"]["scenarios"], ["U"])
+
+    def test_retry_of_obsolete_p6_does_not_start_revised_contract(self):
+        sim = Sim(auto=(), manual=("M",))
+        sim.to_review_pass()
+        sim.apply({"type": "trigger_p6"})
+        p6, = sim.spawned()
+        sim.verification(auto=(), manual=("U",), sha256="w" * 64)
+        sim.apply({"type": "run_failed", "run_id": p6["run_id"], "reason": "agent stopped"})
+        self.assertEqual(sim.spawned(), [])
+        self.assertFalse(sim.state["p6"]["triggered"])
+
+    def test_unconfirmed_verification_is_not_reissued_with_a_new_handoff(self):
+        for phase in ("P5", "P6"):
+            with self.subTest(phase=phase):
+                sim = Sim(auto=("A",) if phase == "P5" else (), manual=("M",))
+                sim.to_review_pass()
+                if phase == "P6":
+                    sim.apply({"type": "trigger_p6"})
+                original, = [a for a in sim.step(start=False) if a["action"] == "spawn"]
+                sim.verification(auto=("B",) if phase == "P5" else (), manual=("U",), sha256="w" * 64)
+                self.assertFalse(any(a["action"] == "spawn" for a in af.next_actions(sim.state)))
+                sim.apply({"type": "run_failed", "run_id": original["run_id"], "reason": "confirmed never started"})
+                spawns = sim.spawned()
+                self.assertEqual([a["phase"] for a in spawns], ["P5"] if phase == "P5" else [])
+
+    def test_documented_frontmatter_comments_are_not_scenario_ids(self):
+        fields = af.parse_frontmatter('---\nauto_agent: [A] # automatic\nmanual_agent: [] # empty\nmanual_user: ["U#1"] # user\n---\n')
+        self.assertEqual(af.phase_scenarios(fields, "P5"), ["A"])
+        self.assertEqual(af.phase_scenarios(fields, "P6"), ["U#1"])
+
+    def test_incomplete_or_misspelled_verification_fields_are_refused(self):
+        for fields in ({}, {"auto_agnet": ["A"]}, {"auto_agent": ["A"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": ["<scenario ids>"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": [], "manual_agnet": ["M"]}):
+            with self.subTest(fields=fields), self.assertRaises(af.FlowError):
+                af.validate_verification_fields(fields)
+
+    def test_legacy_sparse_handoff_log_still_replays(self):
+        sim = Sim(verification=False)
+        sim.apply({"type": "handoff", "kind": "verification", "path": "old.md", "sha256": "v" * 64,
+                   "fields": {"auto": []}})
+        self.assertEqual(sim.state["handoffs"]["verification"]["fields"], {"auto": []})
+
+
+class LegacyReplayTests(unittest.TestCase):
+    def events(self):
+        return [
+            {"type": "init", "milestone": "M2", "ticket": "T-1"},
+            {"type": "handoff", "kind": "implementation", "path": "implementation.md", "sha256": "i" * 64,
+             "fields": {"branch": "b", "workdir": "w", "target": "main", "depends_on": []}},
+            {"type": "handoff", "kind": "verification", "path": "verification.md", "sha256": "v" * 64,
+             "fields": {"auto": ["V"], "manual": ["V"]}},
+            {"type": "dispatched", "phase": "P3", "run_id": "M2-P3-1"},
+            {"type": "result", "result": {"run_id": "M2-P3-1", "phase": "P3", "status": "completed",
+                                          "head": sha(1), "pr_url": "https://example/pr/1"},
+             "push": {"class": "initial"}},
+            {"type": "dispatched", "phase": "P4", "run_id": "M2-P4-1", "head": sha(1), "round": 1},
+            {"type": "result", "result": {"run_id": "M2-P4-1", "phase": "P4", "status": "completed",
+                                          "head": sha(1), "artifacts": ["review.md"]}},
+            {"type": "dispatched", "phase": "P5", "run_id": "M2-P5-1", "head": sha(1)},
+            {"type": "result", "result": {"run_id": "M2-P5-1", "phase": "P5", "status": "completed",
+                                          "head": sha(1), "scenarios": {"V": "pass"}}},
+            {"type": "trigger_p6"},
+            {"type": "dispatched", "phase": "P6", "run_id": "M2-P6-1", "head": sha(1)},
+        ]
+
+    def test_legacy_duplicate_ids_replay_and_preserve_both_phase_assignments(self):
+        events = self.events()
+        p5 = af.fold(events[:8])["active"]["M2-P5-1"]
+        self.assertEqual(p5["scenarios"], ["V"])
+        p6 = af.fold(events)["active"]["M2-P6-1"]
+        self.assertEqual(p6["scenarios"], ["V"])
+        self.assertEqual(p6["scenario_groups"]["manual_user"], ["V"])
+
+    def test_legacy_duplicate_id_is_only_assigned_to_the_spawned_phase(self):
+        for phase, events in (("P5", self.events()[:8]), ("P6", self.events())):
+            with self.subTest(phase=phase):
+                state = af.fold(events)
+                run_id = f"M2-{phase}-1"
+                action = af.spawn_action(state, phase, run_id, state["active"][run_id])
+                self.assertEqual(action["inputs"]["scenario_groups"],
+                                 {"auto_agent": ["V"] if phase == "P5" else [], "manual_agent": [],
+                                  "manual_user": ["V"] if phase == "P6" else []})
+
+    def test_legacy_duplicates_do_not_break_sibling_loading_or_cli_repair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current, sibling = root / "M1", root / "M2"
+            current.mkdir()
+            sibling.mkdir()
+            (sibling / "run.jsonl").write_text(
+                "".join(json.dumps(ev) + "\n" for ev in self.events()), encoding="utf-8")
+            self.assertEqual(af.load_siblings(current)[0][0], "M2")
+            handoff = sibling / "verification.md"
+            handoff.write_text("---\nauto_agent: [A]\nmanual_agent: []\nmanual_user: [U]\n---\n",
+                               encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = af.main(["handoff", "--dir", str(sibling), "--kind", "verification", str(handoff),
+                                "--dry-run"])
+            self.assertEqual(code, 0)
+            self.assertEqual(af.Session(sibling).state["handoffs"]["verification"]["sha256"], af.file_sha(handoff))
+
+    def test_new_ingress_still_rejects_legacy_duplicates_and_mixed_field_shapes(self):
+        for fields in ({"auto": ["V"], "manual": ["V"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": [], "auto": ["V"]},
+                       {"auto_agent": [], "manual_agent": [], "manual_user": [], "manual": []}):
+            with self.subTest(fields=fields), self.assertRaises(af.FlowError):
+                af.validate_verification_fields(fields)
+
+    def test_quoted_frontmatter_preserves_space_hash_in_paths(self):
+        fields = af.parse_frontmatter('---\nworkdir: "D:\\Work #2\\repo" # checkout\nbranch: "feature #2"\ntarget: main\n---\n')
+        self.assertEqual(fields["workdir"], r"D:\Work #2\repo")
+        self.assertEqual(fields["branch"], "feature #2")
 
 
 if __name__ == "__main__":
