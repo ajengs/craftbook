@@ -83,13 +83,15 @@ Write the PR summary: four or five sentences grounded in the diff and commit mes
 python scripts/aggregate_findings.py <temp-dir> --json-out <temp-dir>/aggregated.json --md-out <temp-dir>/findings.md
 ```
 
-Read its warnings (thin blast radii, unclassified findings, same-location findings it did not merge), fix the JSON and re-run. Every finding needs an exact line number: if a reviewer returned `null`, find it in the pre-loaded content.
+Read its warnings, fix the JSON and rerun. For duplicate findings with conflicting action classes, the script keeps the strictest class and reports the conflict for you to resolve. Every finding needs an exact line number. If a reviewer returned `null`, find the line in the pre-loaded content.
+
+The script exits with an error if zero reviewer files are usable. If only some are usable, it preserves their findings and marks the outcome as incomplete in both reports. Recover the missing reviewer output if possible. If the coverage gap remains, identify the affected reviewer and scope in the verdict and the handoff.
 
 **Keep the raw reviewer JSON.** Copy the temp folder's reviewer files to `<review-dir>/<review-file-name-without-extension>.reviewers/`, so a later check can measure which reviewer found what. Copy `aggregated.json` there too: the next round reads the findings from it.
 
 ## 7. Decide the verdict
 
-Pick one of the four verdicts using the criteria in `references/review-template.md`. Produce: the label with the **target branch named in it**, a one-line state sentence (what changed since any previous review), a two or three sentence rationale citing finding IDs, and **two separate ID lists**: what blocks the merge, and what must be fixed before production enablement. Keeping those two apart is most of the verdict's value. A verdict must never rest on "the flag is off".
+Pick one of the four verdicts using the criteria in `references/review-template.md`. Produce: the label with the **target branch named in it**, a one-line state sentence (what changed since any previous review), a two or three sentence rationale citing finding IDs, and **two separate ID lists**: what blocks the merge, and what must be fixed before production enablement. Keeping those two apart is most of the verdict's value. A verdict must never rest on "the flag is off". Base any merge recommendation on the coverage actually obtained.
 
 ## 8. Write the document
 
