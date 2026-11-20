@@ -14,6 +14,9 @@ Commands (each takes --dir <initiative folder>):
     upsert   add or update one row of a table: upsert artifacts specs-M1 path=milestones/M1/specs.md sha256=...
     remove   drop a row:                       remove blockers gh-auth
     decide   append a material decision:       decide "Version 1.0.0" --artifact analysis
+    supersede   log a value a document no longer holds, to superseded.jsonl:
+                supersede diagnosis-M1 --section "Open decisions/1" --kind changed --was "(a)" --now "(b)" --reason ...
+    superseded  print that log, optionally filtered (no write)
     show     print the JSON (or one section)
     render   print STATE.md, or write it with --out
     host     print the host and this session's own ids (no write)
@@ -37,6 +40,8 @@ import os
 import re
 import shlex
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -287,6 +292,64 @@ def cmd_decide(store: Store, args):
         entry["artifacts"] = args.artifact
     state["decisions"].append(entry)
     return store.save(state)
+
+
+SUPERSEDED_LOG = "superseded.jsonl"
+SUPERSEDED_KINDS = ("changed", "rejected", "stale")
+SUPERSEDED_LOCK_WAIT = 10.0
+
+
+def read_superseded(folder: Path) -> list:
+    path = folder / SUPERSEDED_LOG
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+@contextmanager
+def superseded_lock(folder: Path):
+    """Any phase may append, so numbering the next entry and appending it must not interleave."""
+    lock = folder / (SUPERSEDED_LOG + ".lock")
+    deadline = time.monotonic() + SUPERSEDED_LOCK_WAIT
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise StateError(f"{lock} has been held for {SUPERSEDED_LOCK_WAIT:g}s; if no supersede is "
+                                 "running, a crashed one left it: delete it and retry")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def cmd_supersede(store: Store, args):
+    """Documents are edited to hold the latest values; this append-only log keeps what they no longer say."""
+    store.load()
+    was = verbatim(args, "was", required=True)
+    new = verbatim(args, "now")
+    if args.kind == "changed" and not new:
+        raise StateError("a changed value needs --now (or --now-file): what the document says instead")
+    with superseded_lock(store.folder):
+        entry = {"id": f"S{len(read_superseded(store.folder)) + 1}", "at": now(), "kind": args.kind,
+                 "document": args.document, "section": args.section, "was": was, "now": new,
+                 "reason": args.reason, "source": args.source, "phase": args.phase, "milestone": args.milestone}
+        entry = {k: v for k, v in entry.items() if v is not None}
+        with (store.folder / SUPERSEDED_LOG).open("a", encoding="utf-8", newline="\n") as log:
+            log.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return entry
+
+
+def cmd_superseded(store: Store, args):
+    entries = read_superseded(store.folder)
+    for key in ("document", "milestone", "kind"):
+        wanted = getattr(args, key)
+        if wanted:
+            entries = [e for e in entries if e.get(key) == wanted]
+    return entries
 
 
 def cmd_host(store: Store, args):
@@ -914,6 +977,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text")
     p.add_argument("--artifact", action="append", default=[])
     p.set_defaults(func=cmd_decide)
+    p = sub.add_parser("supersede", help="log a value a document no longer holds")
+    p.add_argument("document", help="the document, as state.json names it (diagnosis-M1, specs-M1, kickoff) or a path")
+    p.add_argument("--section", required=True, help="where in the document: heading, row id or anchor")
+    p.add_argument("--kind", choices=SUPERSEDED_KINDS, required=True,
+                   help="changed: replaced by --now; rejected: an option or proposal turned down; "
+                        "stale: no longer true, nothing replaces it")
+    p.add_argument("--was", help="the old value, as the document had it")
+    p.add_argument("--was-file", help="the old value from a file, for long or quoted text")
+    p.add_argument("--now", help="the value the document holds instead (required for changed)")
+    p.add_argument("--now-file")
+    p.add_argument("--reason", required=True, help="why it changed")
+    p.add_argument("--source", help="what decided it: the user's words, a phase finding, a ticket")
+    p.add_argument("--phase", help="the phase that found or made the change (P1-P6, D1, umbrella)")
+    p.add_argument("--milestone")
+    p.set_defaults(func=cmd_supersede)
+    p = sub.add_parser("superseded", help="print the superseded-values log")
+    p.add_argument("--document")
+    p.add_argument("--milestone")
+    p.add_argument("--kind", choices=SUPERSEDED_KINDS)
+    p.set_defaults(func=cmd_superseded)
     p = sub.add_parser("show")
     p.add_argument("--section")
     p.set_defaults(func=cmd_show)

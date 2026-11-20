@@ -1,7 +1,8 @@
 ---
-auto_agent: <[VER ids] for P5, or [] if none>
+auto_agent: <[VER ids] for automatic verification, including any under p3_evidence, or []>
 manual_agent: <[VER ids] for a user-triggered, fully agent-executed run, or []>
 manual_user: <[VER ids] requiring user interactions, or []>
+p3_evidence: <[VER-001] when every REP is a regression test the fix adds and the diagnosis needs evidence only on P3's pushed head. P4 checks the red and green runs before the router skips P5 for this scenario. Use [] otherwise.>
 ---
 # Diagnosis — <bug>
 
@@ -29,14 +30,14 @@ One `REP-` row per way to reproduce the symptom or per missing reproduction. Use
 
 | Code | Symptom it asserts | Kind | Run and owner | Files | Result before the fix | Minimised |
 |---|---|---|---|---|---|---|
-| REP-001 | <the reported symptom> | <automatic / manual / none> | <P3 regression test, other command and owner, user-run steps, or pending reproduction> | <paths, if available> | <recorded failure and version, P3 baseline assignment, user observation, or accepted gap and decision> | <what was cut and why the rest is load-bearing, if applicable> |
+| REP-001 | <the reported symptom> | <automatic / manual / none> | <P3 regression test, other command and owner, user-run steps, or pending reproduction> | <paths, if available> | <recorded failure and version, "not run in D1: P3 shows it red" for a deferred regression test, user observation, or accepted gap and decision> | <what was cut and why the rest is load-bearing, if applicable> |
 
 ## Verification
 This section is the bug's verification contract and verification handoff, shaped like `templates/verification-contract.md`. Routine test and CI runs are not scenarios. Assign each scenario exactly one category: **auto agent run** (`auto_agent`, P5 after P4 passes), **manual agent run** (`manual_agent`, user-triggered P6, fully agent-executed) or **manual user run** (`manual_user`, user-triggered P6 with specified user interactions). The frontmatter lists the `VER-` codes by category.
 
 | Code | Type | Run | Reproductions covered | What to check | Evidence to collect | Pass condition |
 |---|---|---|---|---|---|---|
-| VER-001 | Reproduction verification (when applicable) | auto_agent | <automatic REP rows assigned to this run> | Check the reported symptom and named sibling symptoms | Recorded before-fix failures and passing results on the exact PR head | Each listed REP failed on the symptom before the change and passes on the head |
+| VER-001 | Reproduction verification (when applicable) | auto_agent | <automatic REP rows assigned to this scenario> | Check the reported symptom and named sibling symptoms | Recorded before-fix failures and green results on the exact PR head. For `p3_evidence`, use P3's recorded red and green runs, checked by P4 for its reviewed head | Each listed REP failed on the symptom before the change and passes on the head |
 | VER-002 | Full PR review (optional) | auto_agent | All REP rows | Review the whole PR with the PR reviewer: the change addresses the named root cause and stays within the fix approach | The review file | No blocks-merge findings. Include only if the user approves it. Runs once: skipped on reruns after rework |
 | VER-003 | <environment / data / benchmark / user interaction / other> | <auto_agent / manual_agent / manual_user> | <REP ids> | <observed before-fix failure and expected result on the PR head> | <baseline, head and run output or user observation> | <expected behavior on the PR head> |
 

@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import artifex_notify as notify  # noqa: E402
 import artifex_flow as flow  # noqa: E402
-from test_artifex_flow import GitRepo, git  # noqa: E402
+from test_artifex_flow import FakeGit  # noqa: E402
 
 
 class Clock:
@@ -294,9 +294,9 @@ class NotifierTests(unittest.TestCase):
             send.assert_called_once()
 
     def test_validated_completion_emits_finished_after_commit(self):
-        repo_root = self.root / "repo"
-        repo_root.mkdir()
-        repo = GitRepo(repo_root)
+        work = self.root / "work"
+        work.mkdir()
+        repo = FakeGit()
         mdir = self.root / "initiative" / "milestones" / "alpha"
         mdir.mkdir(parents=True)
         import artifex_state as state
@@ -310,7 +310,7 @@ class NotifierTests(unittest.TestCase):
                         "--session-creation", "authorized", "--question", "May phase sessions be created?",
                         "--response", "Yes", "--route", "test-umbrella"])
         handoff = mdir / "implementation-handoff.md"
-        handoff.write_text(f"---\nbranch: feature\nworkdir: {repo.work}\ntarget: main\ndepends_on: none\n---\n",
+        handoff.write_text(f"---\nbranch: feature\nworkdir: {work}\ntarget: main\ndepends_on: none\n---\n",
                            encoding="utf-8")
         payloads = []
 
@@ -331,7 +331,8 @@ class NotifierTests(unittest.TestCase):
 
         webhook = "https://chat.googleapis.com/v1/spaces/test/messages?key=test&token=test"
         with mock.patch.dict(os.environ, {notify.ENV_NAME: webhook}), \
-                mock.patch.object(notify, "_supervised_transport", side_effect=captured):
+                mock.patch.object(notify, "_supervised_transport", side_effect=captured), \
+                mock.patch.object(flow, "Git", lambda _workdir: repo):
             invoke("init", "--milestone", "alpha", "--ticket", "TASK-1")
             handoff_result = invoke("handoff", "--kind", "implementation", str(handoff))
             self.assertEqual(payloads, [])
@@ -344,7 +345,7 @@ class NotifierTests(unittest.TestCase):
             invoke("runs")
             self.assertEqual(len(payloads), 1)
             head = repo.commit("feature.py", "value = 1\n", "feature")
-            git(repo.work, "push", "-q", "origin", "feature")
+            repo.push("feature")
             result_file = mdir / "results" / f"{run_id}.json"
             result_file.parent.mkdir(parents=True, exist_ok=True)
             result_file.write_text(json.dumps({"run_id": run_id, "phase": "P3", "status": "completed",
