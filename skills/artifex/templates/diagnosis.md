@@ -1,5 +1,5 @@
 ---
-auto_agent: <[VER ids] P5 runs after P4 passes; always includes VER-001>
+auto_agent: <[VER ids] for P5, or [] if none>
 manual_agent: <[VER ids] for a user-triggered, fully agent-executed run, or []>
 manual_user: <[VER ids] requiring user interactions, or []>
 ---
@@ -25,20 +25,20 @@ Unavailable or not checked: <list, and why>.
 The excerpts that prove the root cause, in this file (`standards/evidence.md`, Evidence in one file): sample exceptions with counts, the stack traces in code blocks, log lines, metric values with window-scoped links, screenshots, dump or profiler output, test output. Each one names its source file or link. Redact customer data.
 
 ## Reproduction
-One row per reproduction, each with a `REP-` code. A reproduction proves the bug exists; the verification below proves the fix removed it.
+One `REP-` row per way to reproduce the symptom or per missing reproduction. Use the verification section to assign available reproductions to runs. Record accepted gaps and their residual risk under Material limitations.
 
-| Code | Symptom it asserts | Kind | Run | Files | Result before the fix | Minimised |
+| Code | Symptom it asserts | Kind | Run and owner | Files | Result before the fix | Minimised |
 |---|---|---|---|---|---|---|
-| REP-001 | <the reported symptom, not a nearby failure> | <automatic / manual / none> | <command or steps> | <paths in the milestone folder, or the regression test the fix adds> | <red, with the exact output that matches the symptom; or "not run in D1: P3 shows it red" with the user's decision> | <what was cut and why the rest is load-bearing> |
+| REP-001 | <the reported symptom> | <automatic / manual / none> | <P3 regression test, other command and owner, user-run steps, or pending reproduction> | <paths, if available> | <recorded failure and version, P3 baseline assignment, user observation, or accepted gap and decision> | <what was cut and why the rest is load-bearing, if applicable> |
 
 ## Verification
 This section is the bug's verification contract and verification handoff, shaped like `templates/verification-contract.md`. Routine test and CI runs are not scenarios. Assign each scenario exactly one category: **auto agent run** (`auto_agent`, P5 after P4 passes), **manual agent run** (`manual_agent`, user-triggered P6, fully agent-executed) or **manual user run** (`manual_user`, user-triggered P6 with specified user interactions). The frontmatter lists the `VER-` codes by category.
 
 | Code | Type | Run | Reproductions covered | What to check | Evidence to collect | Pass condition |
 |---|---|---|---|---|---|---|
-| VER-001 | Reproduction verification | auto_agent | All REP rows | Every reproduction fails before the change and passes on the PR head; sibling symptoms the diagnosis lists, too | P3's recorded red run per REP; a run on the PR head (or the CI result for that exact head) | Each REP red before the change and green on the PR head. A REP with no red run, or not green on the head, fails this scenario |
+| VER-001 | Reproduction verification (when applicable) | auto_agent | <automatic REP rows assigned to this run> | Check the reported symptom and named sibling symptoms | Recorded before-fix failures and passing results on the exact PR head | Each listed REP failed on the symptom before the change and passes on the head |
 | VER-002 | Full PR review (optional) | auto_agent | All REP rows | Review the whole PR with the PR reviewer: the change addresses the named root cause and stays within the fix approach | The review file | No blocks-merge findings. Include only if the user approves it. Runs once: skipped on reruns after rework |
-| VER-003 | <environment / data / benchmark / user interaction / other> | <auto_agent / manual_agent / manual_user> | <REP ids> | | | |
+| VER-003 | <environment / data / benchmark / user interaction / other> | <auto_agent / manual_agent / manual_user> | <REP ids> | <observed before-fix failure and expected result on the PR head> | <baseline, head and run output or user observation> | <expected behavior on the PR head> |
 
 ### Tools and evidence by run
 Local tools catalog: <resolver source, resolved absolute path and full SHA-256; or explicitly not applicable>. See `references/verification-tools.md`.
@@ -55,6 +55,7 @@ Local tools catalog: <resolver source, resolved absolute path and full SHA-256; 
 ### Environment / fixtures / raw output location
 
 ### Material limitations / exclusions
+<Missing reproduction, user decision and date, alternative evidence and residual risk to carry through to sign-off.>
 
 ## Root cause
 What is wrong, where (files, methods) and why it produces the symptom.

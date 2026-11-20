@@ -58,6 +58,15 @@ skills/
     polling-rules.md      copied into the session folder and run by the poll
 ```
 
+## Tests
+
+Run both suites from the repository root:
+
+```bash
+(cd skills/artifex/scripts && python -m unittest discover)
+python -m unittest discover -s skills/pr-review-pipeline/scripts
+```
+
 ## Conventions
 
 - A skill folder is self-contained. Scripts, templates and references live inside it and are referenced relative to it.
