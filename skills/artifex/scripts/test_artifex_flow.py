@@ -160,6 +160,43 @@ class HappyPathTests(unittest.TestCase):
         sim.result(p5["run_id"], head=sha(1), scenarios={"VER-002": "pass"})
         self.assertEqual(sim.kinds()[-1], "ready_for_acceptance")
 
+    def diagnosis(self, sim, auto, p3_evidence, sha256):
+        sim.apply({"type": "handoff", "kind": "verification", "path": "diagnosis.md", "sha256": sha256,
+                   "fields": {"auto_agent": list(auto), "manual_agent": [], "manual_user": [],
+                              "p3_evidence": list(p3_evidence)}})
+
+    def test_a_diagnosis_after_the_review_passed_gets_a_review_round_before_p5_is_skipped(self):
+        sim = Sim(verification=False)
+        sim.to_review_pass()
+        self.diagnosis(sim, auto=("VER-001",), p3_evidence=("VER-001",), sha256="d" * 64)
+        self.assertNotIn("ready_for_acceptance", sim.kinds())
+        self.assertEqual(sim.kinds()[-1], "evidence_review")
+        p4, = sim.spawned()
+        self.assertEqual((p4["phase"], p4["mode"]), ("P4", "incremental"))
+        self.assertEqual(p4["inputs"]["verification_handoff"], "diagnosis.md@" + "d" * 12)
+        sim.result(p4["run_id"], head=sha(1))
+        self.assertEqual(sim.spawned(), [])
+        self.assertEqual(sim.kinds()[-1], "ready_for_acceptance")
+
+    def test_a_replaced_diagnosis_that_adds_p3_evidence_gets_a_review_round(self):
+        sim = Sim(verification=False)
+        self.diagnosis(sim, auto=("VER-001",), p3_evidence=(), sha256="d" * 64)
+        sim.to_review_pass()
+        self.assertEqual(sim.spawned()[0]["phase"], "P5")
+        self.diagnosis(sim, auto=("VER-001",), p3_evidence=("VER-001",), sha256="e" * 64)
+        self.assertEqual(sim.kinds()[-1], "evidence_review")
+        self.assertNotIn("ready_for_acceptance", sim.kinds())
+
+    def test_a_diagnosis_replaced_while_p4_runs_is_reviewed_again(self):
+        sim = self.p3_evidence_sim(auto=("VER-001",), p3_evidence=("VER-001",))
+        p3, = sim.spawned()
+        sim.result(p3["run_id"], head=sha(1), push="initial")
+        p4, = sim.spawned()
+        self.diagnosis(sim, auto=("VER-001",), p3_evidence=("VER-001",), sha256="e" * 64)
+        sim.result(p4["run_id"], head=sha(1))
+        self.assertEqual(sim.kinds()[-1], "evidence_review")
+        self.assertNotIn("ready_for_acceptance", sim.kinds())
+
     def test_p3_evidence_must_name_auto_scenarios(self):
         with self.assertRaises(af.FlowError):
             af.validate_verification_fields({"auto_agent": [], "manual_agent": [], "manual_user": ["VER-001"],

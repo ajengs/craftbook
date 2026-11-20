@@ -9,6 +9,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -67,6 +69,39 @@ class StateCliTests(unittest.TestCase):
         self.assertNotIn("superseded", self.state())
         self.assertEqual([e["id"] for e in self.cli("superseded", "--milestone", "M1")], ["S1", "S2"])
         self.assertEqual([e["id"] for e in self.cli("superseded", "--kind", "rejected")], ["S3"])
+
+    def test_concurrent_supersedes_get_distinct_ids(self):
+        read = st.read_superseded
+
+        def slow_read(folder):
+            entries = read(folder)
+            time.sleep(0.3)  # widen the gap between numbering and appending
+            return entries
+
+        codes = []
+
+        def supersede(n):
+            codes.append(st.main(["--dir", str(self.dir), "supersede", "specs-M1", "--section", f"SPEC-{n}",
+                                  "--kind", "stale", "--was", "old", "--reason", "parallel"]))
+
+        # One redirect for both threads: redirect_stdout swaps a global, so a per-thread one races.
+        with patch.object(st, "read_superseded", slow_read), contextlib.redirect_stdout(io.StringIO()):
+            threads = [threading.Thread(target=supersede, args=(n,)) for n in (1, 2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(codes, [0, 0])
+        lines = (self.dir / "superseded.jsonl").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(sorted(json.loads(line)["id"] for line in lines), ["S1", "S2"])
+        self.assertFalse((self.dir / "superseded.jsonl.lock").exists())
+
+    def test_a_lock_left_by_a_crashed_supersede_is_reported(self):
+        (self.dir / "superseded.jsonl.lock").touch()
+        with patch.object(st, "SUPERSEDED_LOCK_WAIT", 0.1):
+            self.cli("supersede", "specs-M1", "--section", "SPEC-1", "--kind", "stale", "--was", "old",
+                     "--reason", "x", expect=2)
+        self.assertFalse((self.dir / "superseded.jsonl").exists())
 
     def test_a_changed_value_needs_what_replaced_it(self):
         self.cli("supersede", "kickoff", "--section", "Scope", "--kind", "changed", "--was", "x", "--reason", "y",

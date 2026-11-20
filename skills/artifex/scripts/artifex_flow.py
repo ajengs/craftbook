@@ -96,7 +96,8 @@ def new_state() -> dict:
         # earlier review or P5 pass forward instead of forcing a rerun.
         "pr": {"url": None, "head": None, "code_head": None, "equivalent": [], "heads": []},
         "review": {"mode": "initial", "cap": CYCLE_CAPS["initial"], "rounds": 0, "total": 0,
-                   "open": True, "passed_head": None, "last_reviewed_head": None, "last_review": []},
+                   "open": True, "passed_head": None, "last_reviewed_head": None, "last_review": [],
+                   "evidence_checked": None},
         "p5": {"passed_head": None, "reworks": 0, "rework_cap": P5_REWORK_CAP},
         "p6": {"triggered": False, "passed_head": None},
         "requests": {}, "active": {}, "seq": {},
@@ -235,6 +236,13 @@ def after_review(state: dict, from_pass: bool) -> list:
                                "Review passed; P5 waits for the verification handoff", post=False)]
         return []
     fields = ver["fields"]
+    if fields.get("p3_evidence") and state["review"].get("evidence_checked") != ver["sha256"]:
+        # Skipping P5 for these scenarios rests on P4 having checked P3's red and green runs,
+        # and a review that never saw this handoff revision hasn't.
+        start_cycle(state, "incremental")
+        request(state, "P4", "evidence")
+        return [checkpoint("evidence_review", "The verification handoff leaves auto scenarios to P3's red and green "
+                           "runs, which the passing review didn't check; one more review round", post=False)]
     if phase_scenarios(fields, "P5"):
         return []
     if phase_scenarios(fields, "P6"):
@@ -329,6 +337,8 @@ def on_dispatched(state, ev):
             # The run answers the scenarios it was given, even if the handoff changes while it runs.
             scenarios=list(phase_scenarios(ver["fields"], phase)),
             scenario_groups=scenario_groups(ver["fields"]))
+    if phase == "P4" and ver is not None:
+        state["active"][ev["run_id"]]["reviewed_verification_sha"] = ver["sha256"]
     state["seq"][phase] = state["seq"].get(phase, 0) + 1
     state["handled_threads"].extend(t for t in req["threads"] if t not in state["handled_threads"])
     if phase == "P4":
@@ -510,6 +520,7 @@ def p4_result(state, run, env, ev):
     if status == "completed":
         review["open"] = False
         review["passed_head"] = env["head"]
+        review["evidence_checked"] = run.get("reviewed_verification_sha")
         out = [checkpoint("review_passed", f"{label} passed", artifacts=artifacts)]
         if not is_current(state, env["head"]):
             start_cycle(state, "incremental")

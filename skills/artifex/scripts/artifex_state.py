@@ -40,6 +40,8 @@ import os
 import re
 import shlex
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -294,6 +296,7 @@ def cmd_decide(store: Store, args):
 
 SUPERSEDED_LOG = "superseded.jsonl"
 SUPERSEDED_KINDS = ("changed", "rejected", "stale")
+SUPERSEDED_LOCK_WAIT = 10.0
 
 
 def read_superseded(folder: Path) -> list:
@@ -303,6 +306,26 @@ def read_superseded(folder: Path) -> list:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+@contextmanager
+def superseded_lock(folder: Path):
+    """Any phase may append, so numbering the next entry and appending it must not interleave."""
+    lock = folder / (SUPERSEDED_LOG + ".lock")
+    deadline = time.monotonic() + SUPERSEDED_LOCK_WAIT
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise StateError(f"{lock} has been held for {SUPERSEDED_LOCK_WAIT:g}s; if no supersede is "
+                                 "running, a crashed one left it: delete it and retry")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
 def cmd_supersede(store: Store, args):
     """Documents are edited to hold the latest values; this append-only log keeps what they no longer say."""
     store.load()
@@ -310,12 +333,13 @@ def cmd_supersede(store: Store, args):
     new = verbatim(args, "now")
     if args.kind == "changed" and not new:
         raise StateError("a changed value needs --now (or --now-file): what the document says instead")
-    entry = {"id": f"S{len(read_superseded(store.folder)) + 1}", "at": now(), "kind": args.kind,
-             "document": args.document, "section": args.section, "was": was, "now": new,
-             "reason": args.reason, "source": args.source, "phase": args.phase, "milestone": args.milestone}
-    entry = {k: v for k, v in entry.items() if v is not None}
-    with (store.folder / SUPERSEDED_LOG).open("a", encoding="utf-8", newline="\n") as log:
-        log.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    with superseded_lock(store.folder):
+        entry = {"id": f"S{len(read_superseded(store.folder)) + 1}", "at": now(), "kind": args.kind,
+                 "document": args.document, "section": args.section, "was": was, "now": new,
+                 "reason": args.reason, "source": args.source, "phase": args.phase, "milestone": args.milestone}
+        entry = {k: v for k, v in entry.items() if v is not None}
+        with (store.folder / SUPERSEDED_LOG).open("a", encoding="utf-8", newline="\n") as log:
+            log.write(json.dumps(entry, ensure_ascii=False) + "\n")
     return entry
 
 
