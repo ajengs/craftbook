@@ -80,8 +80,7 @@ FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.DOTALL)
 # ---------------------------------------------------------------- loading
 
 
-def load_reviewer(path: Path) -> dict:
-    raw = path.read_text(encoding="utf-8").strip()
+def parse_reviewer_json(raw: str):
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -94,7 +93,32 @@ def load_reviewer(path: Path) -> dict:
     end = raw.rfind("}")
     if start != -1 and end > start:
         return json.loads(raw[start : end + 1])
-    raise ValueError(f"{path.name}: no JSON object found")
+    raise ValueError("no JSON object found")
+
+
+def load_reviewer(path: Path) -> dict:
+    data = parse_reviewer_json(path.read_text(encoding="utf-8").strip())
+    if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
+        raise ValueError("expected a reviewer object with a findings array")
+    for key in ("reviewer", "reviewer_summary"):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise ValueError(f"{key} must be text")
+    budget = data.get("budget_exceeded")
+    if budget is not None and (
+        not isinstance(budget, list) or any(not isinstance(area, str) for area in budget)
+    ):
+        raise ValueError("budget_exceeded must be an array of strings")
+    text_fields = ("severity", "category", "title", "description", "blast_radius",
+                   "suggestion", "file", "code_snippet", "action_class", "reviewer")
+    for index, finding in enumerate(data["findings"], start=1):
+        if not isinstance(finding, dict):
+            raise ValueError(f"finding {index} must be an object")
+        for key in text_fields:
+            if finding.get(key) is not None and not isinstance(finding[key], str):
+                raise ValueError(f"finding {index}: {key} must be text or null")
+        if finding.get("line") is not None and type(finding["line"]) is not int:
+            raise ValueError(f"finding {index}: line must be an integer or null")
+    return data
 
 
 # ---------------------------------------------------------------- merging
@@ -108,10 +132,15 @@ def normalize_file(path: str) -> str:
     return (path or "").replace("\\", "/").strip().lower()
 
 
+def normalize_action_class(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
 def dedupe(findings: list[dict]) -> tuple[list[dict], list[str]]:
     """Merge identical findings; return (merged, warnings)."""
     merged: dict[tuple, dict] = {}
     order: list[tuple] = []
+    warnings: list[str] = []
 
     for finding in findings:
         key = (
@@ -126,23 +155,37 @@ def dedupe(findings: list[dict]) -> tuple[list[dict], list[str]]:
             order.append(key)
             continue
 
-        # Keep the higher severity; carry the other reviewer's wording across so
-        # the extra perspective is not lost.
+        # Choose the severity and action class independently.
         keep, drop = existing, finding
         if SEVERITY_RANK.get(finding.get("severity"), 9) < SEVERITY_RANK.get(
             existing.get("severity"), 9
         ):
             keep, drop = finding, existing
-            keep["reviewers"] = existing.get("reviewers", [])
+            keep["reviewers"] = existing["reviewers"].copy()
             merged[key] = keep
 
         reviewer = drop.get("reviewer", "unknown")
-        if reviewer not in keep["reviewers"]:
-            keep["reviewers"].append(reviewer)
+        incoming_reviewer = finding.get("reviewer", "unknown")
+        if incoming_reviewer not in keep["reviewers"]:
+            keep["reviewers"].append(incoming_reviewer)
+        classes = {
+            action_class
+            for item in (keep, drop)
+            if (action_class := normalize_action_class(item.get("action_class"))) in ACTION_RANK
+        }
+        if classes:
+            strictest = min(classes, key=ACTION_RANK.__getitem__)
+            keep["action_class"] = strictest
+            if len(classes) > 1:
+                ordered = sorted(classes, key=ACTION_RANK.__getitem__)
+                warnings.append(
+                    f"'{keep.get('title') or '?'}' has conflicting action classes "
+                    f"({', '.join(ordered)}). Kept {strictest}."
+                )
         drop_desc = (drop.get("description") or "").strip()
         if drop_desc and drop_desc not in (keep.get("description") or ""):
             keep["description"] = (
-                keep.get("description", "").rstrip()
+                (keep.get("description") or "").rstrip()
                 + f"\n\n*Also raised by {reviewer}:* {drop_desc}"
             )
         if not keep.get("blast_radius") and drop.get("blast_radius"):
@@ -152,7 +195,6 @@ def dedupe(findings: list[dict]) -> tuple[list[dict], list[str]]:
 
     # Different titles at the same location are often the same defect seen
     # through two lenses. Too risky to auto-merge; worth a human glance.
-    warnings: list[str] = []
     by_location: dict[tuple, list[dict]] = defaultdict(list)
     for finding in result:
         by_location[
@@ -160,7 +202,7 @@ def dedupe(findings: list[dict]) -> tuple[list[dict], list[str]]:
         ].append(finding)
     for (file, line), group in by_location.items():
         if len(group) > 1 and file:
-            titles = " | ".join(f.get("title", "?") for f in group)
+            titles = " | ".join(f.get("title") or "?" for f in group)
             warnings.append(
                 f"Same location {file}:{line} has {len(group)} findings "
                 f"with different titles — check for a duplicate: {titles}"
@@ -217,7 +259,7 @@ def default_action_class(finding: dict) -> str:
 def apply_action_classes(findings: list[dict]) -> list[str]:
     warnings = []
     for finding in findings:
-        raw = (finding.get("action_class") or "").strip().lower()
+        raw = normalize_action_class(finding.get("action_class"))
         if raw in ACTION_RANK:
             finding["action_class"] = raw
             continue
@@ -287,7 +329,7 @@ def render_finding(finding: dict, condensed: bool) -> str:
     return "\n".join(parts)
 
 
-def render_outcome(findings: list[dict]) -> str:
+def render_outcome(findings: list[dict], incomplete: bool = False) -> str:
     """The one-line answer, for the top of the document.
 
     A reader opens a review to learn whether they can merge and what they owe
@@ -305,20 +347,29 @@ def render_outcome(findings: list[dict]) -> str:
         if group:
             clauses.append(f"**{len(group)}** {ACTION_PHRASE[action]}")
     if not clauses:
-        return "No findings."
-    if not by_class.get("blocks-merge"):
+        return "Review incomplete · no findings in usable reviewer outputs" if incomplete else "No findings."
+    if incomplete:
+        clauses.insert(0, "Review incomplete")
+    elif not by_class.get("blocks-merge"):
         clauses.append("nothing blocking merge")
     return " · ".join(clauses)
 
 
-def render(findings: list[dict], summaries: list[tuple], budgets: list[tuple]) -> str:
+def render(findings: list[dict], summaries: list[tuple], budgets: list[tuple],
+           skipped_reviewers: dict[str, str] | None = None) -> str:
     counts = {s: 0 for s in SEVERITY_ORDER}
     for finding in findings:
         severity = finding.get("severity", "info")
         if severity in counts:
             counts[severity] += 1
 
-    out: list[str] = [render_outcome(findings), ""]
+    out: list[str] = [render_outcome(findings, incomplete=bool(skipped_reviewers)), ""]
+
+    if skipped_reviewers:
+        out.append("> ⚠️ **Missing reviewer coverage**")
+        for name, error in skipped_reviewers.items():
+            out.append(f"> - `{name}` · {error}")
+        out.append("")
 
     if budgets:
         # A coverage gap qualifies the outcome above, so it belongs with it
@@ -377,9 +428,10 @@ def main() -> int:
     parser.add_argument("--md-out", help="Where to write the rendered findings body")
     args = parser.parse_args()
 
-    input_dir = Path(args.input_dir)
+    input_dir = Path(args.input_dir).resolve()
+    output_paths = {Path(path).resolve() for path in (args.json_out, args.md_out) if path}
     files = sorted(input_dir.glob("*.json"))
-    files = [f for f in files if f.name not in ("aggregated.json",)]
+    files = [f for f in files if f.name != "aggregated.json" and f not in output_paths]
     if not files:
         print(f"No reviewer JSON found in {input_dir}", file=sys.stderr)
         return 1
@@ -387,23 +439,31 @@ def main() -> int:
     all_findings: list[dict] = []
     summaries: list[tuple] = []
     budgets: list[tuple] = []
+    reviewers: list[str] = []
+    skipped_reviewers: dict[str, str] = {}
 
     for path in files:
         try:
             data = load_reviewer(path)
-        except (ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
+            skipped_reviewers[path.name] = str(exc)
             print(f"WARNING: skipping {path.name}: {exc}", file=sys.stderr)
             continue
         reviewer = data.get("reviewer") or path.stem
+        reviewers.append(reviewer)
         if data.get("reviewer_summary"):
             summaries.append((reviewer, data["reviewer_summary"]))
         if data.get("budget_exceeded"):
             budgets.append((reviewer, data["budget_exceeded"]))
-        for finding in data.get("findings") or []:
-            finding.setdefault("reviewer", reviewer)
+        for finding in data["findings"]:
+            finding["reviewer"] = finding.get("reviewer") or reviewer
             severity = (finding.get("severity") or "info").lower()
             finding["severity"] = severity if severity in SEVERITY_RANK else "info"
             all_findings.append(finding)
+
+    if not reviewers:
+        print(f"No usable reviewer JSON found in {input_dir}", file=sys.stderr)
+        return 1
 
     merged, dup_warnings = dedupe(all_findings)
     blast_warnings = check_blast_radius(merged)
@@ -411,7 +471,7 @@ def main() -> int:
     merged = sort_findings(merged)
     assign_ids(merged)
 
-    body = render(merged, summaries, budgets)
+    body = render(merged, summaries, budgets, skipped_reviewers)
 
     if args.md_out:
         Path(args.md_out).write_text(body, encoding="utf-8")
@@ -423,12 +483,13 @@ def main() -> int:
         a: sum(1 for f in merged if f["action_class"] == a) for a in ACTION_ORDER
     }
     payload = {
-        "reviewers": [name for name, _ in summaries],
+        "reviewers": reviewers,
+        "skipped_reviewers": skipped_reviewers,
         "reviewer_summaries": dict(summaries),
         "budget_exceeded": dict(budgets),
         "counts": counts,
         "action_counts": action_counts,
-        "outcome_line": render_outcome(merged),
+        "outcome_line": render_outcome(merged, incomplete=bool(skipped_reviewers)),
         "total_raw": len(all_findings),
         "total_after_dedupe": len(merged),
         "findings": merged,
