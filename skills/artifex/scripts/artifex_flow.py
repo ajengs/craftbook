@@ -289,7 +289,7 @@ def on_handoff(state, ev):
         request(state, "P3", "initial")
         out.append(checkpoint(
             "compact_umbrella", "Good point to compact the umbrella: what P1 and P2 settled is now in the artifacts, "
-            "state.json and run.jsonl. Compact now if the host allows it; otherwise suggest it to the user"))
+            "state.json and run.jsonl. Tell the user this is a good time to compact; the session can't compact itself"))
     if kind == "implementation":
         out.extend(_target_ahead(state, ev.get("target_ahead")))
     if kind == "implementation" and open_fields(state):
