@@ -12,6 +12,7 @@ Reusable agent skills for engineering work. Each skill is a self-contained folde
 | [`benchmark-designer`](skills/benchmark-designer/SKILL.md) | Designs and runs a benchmark from one template: an approval contract (question, configurations, workloads, decision rule, validity, schedule) and an agent runbook that executes it. Works for any stack. |
 | [`pr-review-pipeline`](skills/pr-review-pipeline/SKILL.md) | A verdict-first pull request review. It builds a commit-accurate diff, runs two or three specialist reviewers in parallel, calibrates severity, and writes a local review that separates what blocks the merge from what must be fixed before a feature is switched on. Works with any git host and doesn't post to the PR. |
 | [`status-page`](skills/status-page/SKILL.md) | Sets up a remote status page for any session: a Claude Doc the user reads and comments on from a phone, plus a polling job that answers the comments. Works on its own, with or without another workflow. |
+| [`ship-check`](skills/ship-check/SKILL.md) | Checks a deliverable before it reaches anyone else: traces every claim to a source, has a fresh agent cold-read it as the audience, renders it and looks, and fixes each finding everywhere it occurs. For decks, documents, reports, PR descriptions and status updates. |
 
 ## Install
 
@@ -56,6 +57,8 @@ skills/
   status-page/
     SKILL.md
     polling-rules.md      copied into the session folder and run by the poll
+  ship-check/
+    SKILL.md
 ```
 
 ## Conventions
