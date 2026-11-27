@@ -38,6 +38,8 @@ class NotifierTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        (self.root / "state.json").write_text(json.dumps({"notifications": {"status": "authorized"}}),
+                                             encoding="utf-8")
         self.clock = Clock()
         self.sent = []
 
@@ -61,6 +63,19 @@ class NotifierTests(unittest.TestCase):
         sender = notify.Notifier(self.root, "TASK-1", "alpha", env={}, clock=self.clock)
         self.assertEqual(sender.send(self.event()), "disabled")
         self.assertFalse((self.root / "notifications.sqlite3").exists())
+
+    def test_configured_webhook_without_this_initiatives_consent_sends_nothing(self):
+        for record in (None, {}, {"notifications": {"status": "declined"}}):
+            root = self.root / f"initiative-{len(str(record))}"
+            root.mkdir()
+            if record is not None:
+                (root / "state.json").write_text(json.dumps(record), encoding="utf-8")
+            sender = notify.Notifier(root, "TASK-1", "alpha", env={notify.ENV_NAME:
+                                     "https://chat.googleapis.com/v1/spaces/x/messages?key=canary&token=secret"},
+                                     clock=self.clock, transport=self.transport)
+            self.assertEqual(sender.send(self.event()), "not_authorized")
+            self.assertFalse((root / "notifications.sqlite3").exists())
+        self.assertEqual(self.sent, [])
 
     def test_reservation_survives_failure_restart_and_same_key(self):
         def fail(*_):
@@ -177,7 +192,7 @@ class NotifierTests(unittest.TestCase):
         sender = notify.Notifier(blocked / "initiative", "TASK-1", "alpha", env={
             "ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL":
             "https://chat.googleapis.com/v1/spaces/x/messages?key=canary&token=secret"},
-            transport=lambda *args: called.append(args))
+            transport=lambda *args: called.append(args), authorized=lambda _root: True)
         output = io.StringIO()
         with mock.patch.object(notify.sys, "stderr", output):
             self.assertEqual(sender.send(self.event()), "ledger_error")
@@ -309,6 +324,8 @@ class NotifierTests(unittest.TestCase):
             state.main(["--dir", str(initiative), "consent", "--status", "authorized",
                         "--session-creation", "authorized", "--question", "May phase sessions be created?",
                         "--response", "Yes", "--route", "test-umbrella"])
+            state.main(["--dir", str(initiative), "notifications", "--status", "authorized",
+                        "--question", "Send Chat notices for TASK-1?", "--response", "Yes"])
         handoff = mdir / "implementation-handoff.md"
         handoff.write_text(f"---\nbranch: feature\nworkdir: {work}\ntarget: main\ndepends_on: none\n---\n",
                            encoding="utf-8")

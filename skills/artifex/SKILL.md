@@ -9,7 +9,7 @@ description: Use when the user says "Artifex", is starting or resuming an Artife
 
 This is an **instructional skill**, not a permissions system or autonomous orchestrator. The routine transitions of the P3–P6 loop are decided by a script, `scripts/artifex_flow.py`, which the umbrella runs and obeys (`references/orchestration.md`). The script decides; it spawns nothing and enforces nothing outside its own log. Never imply approvals, file writes, agent launches, test results, or enforcement happened unless they actually did.
 
-Optional Google Chat notifications are opt-in through `ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL`. The router sends notices only for committed lifecycle transitions; the umbrella sends planning, approval, and agent-reported blocker notices explicitly. Configure and invoke them as documented in [`references/notifications.md`](references/notifications.md). Notification failures never change routing or authoritative workflow logs.
+Optional Google Chat notifications need two things: `ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL` in the environment, and the user's yes for **this** initiative, recorded with `artifex_state.py notifications` (see Notification authorization). The variable alone sends nothing. Once authorized, the router sends notices for committed P3–P6 transitions, and the umbrella sends one for every other session message it receives (`references/notifications.md`). Notification failures never change routing or authoritative workflow logs.
 
 ## Start here
 
@@ -17,7 +17,7 @@ Optional Google Chat notifications are opt-in through `ARTIFEX_GOOGLE_CHAT_WEBHO
    - **A mode** (`project`, `milestone`, `defect` or `implementation`; `bug` means `defect`): run the printed `init --mode <mode> --mode-source explicit --request-file <file>`, then the printed start. A failed contract is printed, not worked around; tell the user what's missing.
    - **`needs_recommendation`**: recommend one mode from the printed table, with reasons, and start nothing until the user approves it. Then run `init --mode <mode> --mode-source recommended --request-file <file>` and the printed start.
    - **A resumed initiative** (`state.json` exists): `route` reports the stored mode; the request's mode is ignored.
-2. Resolve the one-time phase/replacement-session creation and coordination authorization, plus delivery authorization as described below, in one message to the user, and record both verbatim in `state.json`. This happens in every mode, before the first session is created or phase worker started.
+2. Resolve the one-time phase/replacement-session creation and coordination authorization, plus delivery authorization, plus notification authorization when the webhook variable is set, as described below, in one message to the user, and record each verbatim in `state.json`. This happens in every mode, before the first session is created or phase worker started.
 3. The printed start is one of: P1 (`project`), P2 (`milestone`, or `implementation` without all four artifacts: a short P2), D1 (`defect`), or the router (`implementation` with specs, verification contract, implementation handoff and verification handoff supplied). The umbrella immediately creates a new top-level chat for a session start, subject to the host's session-creation rules below, and does no phase work itself. Never substitute a subagent for P1, P2 or D1. In any other session, identify the initiative, milestone, phase, and whether you are the umbrella or a scoped child.
 4. Read the initiative state (`artifex_state.py show`), current controlling artifacts, and **only** the workflow for the active phase; the umbrella also reads `references/orchestration.md` before the first implementation handoff. Follow its linked standards and template(s), not the whole package. Use the execution efficiency and model allocation guidance below for this role.
 5. If an approval, source artifact, or status is missing, say so. Do not infer it from conversational enthusiasm or an older artifact.
@@ -55,6 +55,14 @@ Phase workers create the branch, commit, push and open the PR. A user rule such 
 > Do you authorize the implementation and verification phase workers of this initiative to create its branch, commit, push to it and open the pull request? Merging, deploying and backporting stay with you.
 
 Record the reply with `artifex_state.py delivery --status <authorized|declined> --question-file <q> --response-file <r>`. If the user's Artifex invocation already grants it, use `delivery --status authorized --from-request` instead of asking. The router holds every implementation start until a delivery record exists and passes the user's words to each phase worker as `delivery_authorization`, so neither the umbrella nor the agent asks again for what it covers. Ask again only for something outside it, such as a merge, or after the user withdraws it. A decline means the user pushes and opens the PR; the umbrella then records it with `event complete --head <sha> --pr-url <url> --note <n>`, without `--run-id`, which completes the queued implementation.
+
+## Notification authorization
+
+The webhook variable is set per machine, so it says nothing about what the user wants for this initiative. When `ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL` is set, ask in the same message as the consent and delivery questions:
+
+> Do you want Google Chat notifications for this initiative (phase starts, checkpoints, results, approval requests and blockers)? This applies to this initiative only.
+
+Record the reply with `artifex_state.py notifications --status <authorized|declined> --question-file <q> --response-file <r>`, or `--from-request` when this initiative's invocation already asks for them. Until an `authorized` record exists in this initiative's `state.json`, the sender refuses every notice (`not_authorized`), router ones included. A yes covers this initiative only: never copy it from another initiative's `state.json`, an earlier conversation or the variable being set. If the variable is set mid-initiative, or the user withdraws the yes, ask or record again. When the variable is unset, don't ask; nothing can be sent.
 
 ## Six phases
 

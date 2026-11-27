@@ -300,6 +300,22 @@ class BriefTests(unittest.TestCase):
         self.assertIn("(stated in the user's Artifex invocation)", text)
         self.assertIn("don't ask the user again", text)
 
+    def test_notifications_record_is_verbatim_per_initiative_and_gates_sending(self):
+        import artifex_notify
+        self.assertFalse(artifex_notify.notifications_authorized(self.dir))
+        self.cli("notifications", "--status", "authorized", "--question", "Send Chat notices for T-1?",
+                 "--response", "yes, this one only", "--source", "umbrella chat")
+        self.cli("set", "notifications", "status=declined", expect=2)
+        self.assertEqual(self.state()["notifications"]["response"], "yes, this one only")
+        self.assertTrue(artifex_notify.notifications_authorized(self.dir))
+        other = Path(self.tmp.name) / "T-2"
+        other.mkdir()
+        (other / "state.json").write_text(json.dumps({"notifications": {}}), encoding="utf-8")
+        self.assertFalse(artifex_notify.notifications_authorized(other))
+        self.cli("notifications", "--status", "declined", "--question", "Send Chat notices for T-1?",
+                 "--response", "stop")
+        self.assertFalse(artifex_notify.notifications_authorized(self.dir))
+
     def test_brief_refuses_without_a_verbatim_consent_record(self):
         self.brief("P1", expect=2)
         self.cli("set", "consent", "response=yes", expect=2)
@@ -473,6 +489,15 @@ class ModeTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, f"{step}\n{result.stderr}")
             ran += 1
         self.assertGreaterEqual(ran, 3)
+
+    def test_route_asks_for_notifications_only_when_a_webhook_is_configured(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL", None)
+            self.assertFalse(any("notifications" in step for step in self.route("/artifex defect ART-20")["next"]))
+        with patch.dict(os.environ, {"ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL": "https://chat.googleapis.com/x"}):
+            ask = self.route("/artifex defect ART-20")["next"][1]
+        self.assertIn("Google Chat notifications", ask)
+        self.assertIn("`notifications`", ask)
 
     def test_route_reads_every_mode_form_and_writes_nothing(self):
         scope = self.write("scope.md", "scope\n")

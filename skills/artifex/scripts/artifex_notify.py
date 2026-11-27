@@ -61,6 +61,15 @@ def valid_url(url: str) -> bool:
         return False
 
 
+def notifications_authorized(root: Path) -> bool:
+    """The webhook variable is machine-wide, so it can't stand for consent: each initiative records its own."""
+    try:
+        state = json.loads((Path(root) / "state.json").read_text(encoding="utf-8"))
+        return (state.get("notifications") or {}).get("status") == "authorized"
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def format_message(event: dict, ticket: str, milestone: str, now: datetime | None = None,
                    secrets: tuple[str, ...] = ()) -> str:
     instant = now or datetime.now(timezone.utc)
@@ -135,8 +144,9 @@ def _supervised_transport(url: str, body: bytes, timeout: float):
 
 class Notifier:
     def __init__(self, root: Path, ticket: str, milestone: str, *, env=None, clock=time.monotonic,
-                 rate_clock=time.time, sleep=time.sleep, transport=None):
+                 rate_clock=time.time, sleep=time.sleep, transport=None, authorized=notifications_authorized):
         self.root, self.ticket, self.milestone = Path(root), ticket, milestone
+        self.authorized = authorized
         self.env = os.environ if env is None else env
         self.clock, self.rate_clock, self.sleep = clock, rate_clock, sleep
         self.transport = transport or _supervised_transport
@@ -145,6 +155,8 @@ class Notifier:
         url = self.env.get(ENV_NAME)
         if not url:
             return "disabled"
+        if not self.authorized(self.root):
+            return "not_authorized"
         key = str(event.get("key", ""))
         secrets = _credentials(url)
         if not key or len(key) > 500 or _safe(key) != key or any(secret in key for secret in secrets):
@@ -321,7 +333,8 @@ def main(argv=None):
     parser.add_argument("--ticket", required=True)
     parser.add_argument("--milestone", required=True)
     parser.add_argument("--key", required=True)
-    parser.add_argument("--kind", choices=("started", "finished", "approval-needed", "blocker"), required=True)
+    parser.add_argument("--kind", choices=("started", "checkpoint", "finished", "approval-needed", "blocker"),
+                        required=True)
     parser.add_argument("--task", default="workflow")
     parser.add_argument("--summary", required=True)
     parser.add_argument("--source")

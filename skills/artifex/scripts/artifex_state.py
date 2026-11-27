@@ -22,6 +22,7 @@ Commands (each takes --dir <initiative folder>):
     host     print the host and this session's own ids (no write)
     consent  record the consent question and the user's reply, both verbatim
     delivery record whether sub agents may branch, commit, push and open PRs, verbatim
+    notifications  record whether this initiative may send Google Chat notifications, verbatim
     brief    print the launch prompt for a P1, P2 or D1 session (no write)
     doc surface <doc>   print where a human-targeted document is reviewed on this host (no write)
     doc approve <doc>   record an approval, refusing a surface the host doesn't bind
@@ -56,7 +57,9 @@ SECTIONS = {
     "workspace": ("workdir", "workdir_kind", "work_folder", "project_folder", "artifact_folder", "source"),
     "consent": ("status", "question", "response", "date", "source", "scope", "umbrella_route", "session_creation"),
     "delivery": ("status", "question", "response", "date", "source", "scope"),
+    "notifications": ("status", "question", "response", "date", "source"),
 }
+VERBATIM_SECTIONS = ("consent", "delivery", "notifications")
 TABLES = {
     "sessions": ("role", "session_id", "route", "model", "effort", "runtime", "detached", "status"),
     "milestones": ("scope", "status", "session", "folder", "depends_on", "link"),
@@ -164,7 +167,7 @@ def new_state(ticket: str, title: str | None, mode: str, mode_source: str, reque
         initiative["request"] = request
     return {"schema": SCHEMA, "revision": 0, "updated": None,
             "initiative": initiative,
-            "status": {}, "workspace": {}, "consent": {}, "delivery": {},
+            "status": {}, "workspace": {}, "consent": {}, "delivery": {}, "notifications": {},
             **{table: {} for table in TABLES}, "decisions": []}
 
 
@@ -245,7 +248,7 @@ def cmd_set(store: Store, args):
     if args.section == "initiative" and any(p.partition("=")[0].rstrip(":") == "track" for p in args.pairs):
         raise StateError("`track` is retired; an initiative's mode is fixed by `init`")
     fields = parse_pairs(args.pairs, SECTIONS[args.section])
-    if args.section in ("consent", "delivery") and {"question", "response", "status", "session_creation"} & set(fields):
+    if args.section in VERBATIM_SECTIONS and {"question", "response", "status", "session_creation"} & set(fields):
         raise StateError(f"record {args.section} with the `{args.section}` command, which keeps the question "
                          "and reply verbatim")
     if args.section == "initiative" and {"mode", "mode_source"} & set(fields):
@@ -253,7 +256,7 @@ def cmd_set(store: Store, args):
     if args.section == "status" and fields.get("status") not in (None, *STATUSES):
         raise StateError(f"status must be one of: {', '.join(STATUSES)}")
     state = store.load()
-    merge(state[args.section], fields)
+    merge(state.setdefault(args.section, {}), fields)
     return store.save(state)
 
 
@@ -657,7 +660,14 @@ def next_commands(folder: Path, mode: str, source: str, parsed: dict, contract: 
     for key, value in request_overrides(args).items():
         if value and key != "mode":
             init += f' --{key.replace("_", "-")} "{value}"'
-    steps = [init, "Ask once for phase/replacement-session creation and bidirectional coordination, plus delivery authorization; record the verbatim replies with `consent --session-creation` and `delivery`."]
+    ask = ("Ask once for phase/replacement-session creation and bidirectional coordination, plus delivery "
+           "authorization")
+    record = "record the verbatim replies with `consent --session-creation` and `delivery`"
+    if os.environ.get("ARTIFEX_GOOGLE_CHAT_WEBHOOK_URL"):
+        ask += ", plus whether this initiative may send Google Chat notifications"
+        record = ("record the verbatim replies with `consent --session-creation`, `delivery` and `notifications`; "
+                  "nothing is sent until `notifications --status authorized` is recorded")
+    steps = [init, f"{ask}; {record}."]
     if contract["result"] == "artifacts ready":
         flow = f'python "{SKILL_DIR / "scripts" / "artifex_flow.py"}"'
         mdir = (folder / "milestones" / mid).resolve()
@@ -728,6 +738,20 @@ def cmd_delivery(store: Store, args):
     state.setdefault("delivery", {})
     merge(state["delivery"], {"status": args.status, "question": question, "response": response,
                               "date": now()[:10], "source": args.source, "scope": args.scope or DELIVERY_SCOPE})
+    return store.save(state)
+
+
+def cmd_notifications(store: Store, args):
+    state = store.load()
+    if args.from_request:
+        if not state["initiative"].get("request"):
+            raise StateError("no request recorded; init with --request-file first")
+        question, response = "(stated in the user's Artifex invocation)", state["initiative"]["request"]
+    else:
+        question, response = verbatim(args, "question", True), verbatim(args, "response", True)
+    state.setdefault("notifications", {})
+    merge(state["notifications"], {"status": args.status, "question": question, "response": response,
+                                   "date": now()[:10], "source": args.source})
     return store.save(state)
 
 
@@ -954,6 +978,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source")
     p.add_argument("--scope")
     p.set_defaults(func=cmd_delivery)
+    p = sub.add_parser("notifications", help="record the user's reply on Google Chat notifications for this "
+                                             "initiative; nothing is sent without an authorized record")
+    p.add_argument("--status", choices=["authorized", "declined"], required=True)
+    p.add_argument("--question")
+    p.add_argument("--question-file")
+    p.add_argument("--response")
+    p.add_argument("--response-file")
+    p.add_argument("--from-request", action="store_true",
+                   help="the user granted it in this initiative's Artifex invocation itself; quote that")
+    p.add_argument("--source")
+    p.set_defaults(func=cmd_notifications)
     p = sub.add_parser("brief")
     p.add_argument("phase", choices=sorted(PHASE_BRIEFS))
     p.add_argument("--milestone")
